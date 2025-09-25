@@ -66,25 +66,36 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
     while(time_start < timeout_ms)
     {
         if (xUSART.USART1ReceivedNum > 0)
-        {
-            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-            
-            // 通过USART2打印出接收到的响应
-            printf("<< Recv from Module: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-            
-            if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
-            {
-                xUSART.USART1ReceivedNum = 0;
-                return 0; // 成功
-            }
-            if (strstr((const char*)xUSART.USART1ReceivedBuffer, "ERROR") != NULL)
-            {
-                xUSART.USART1ReceivedNum = 0;
-                return 1; // 错误
-            }
-            xUSART.USART1ReceivedNum = 0;
-            return 1; 
-        }
+		{
+			// 注意：在中断里我们已经加了'\0'，这里可以不加，但为了保险起见加上也无妨。
+			xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
+			
+			// 通过USART2打印出接收到的响应，便于调试
+			printf("<< Recv from Module: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+			
+			// 检查是否包含我们期望的响应
+			if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
+			{
+				// 找到了！清除标志并返回成功
+				memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE); // 清空缓冲区是个好习惯
+				xUSART.USART1ReceivedNum = 0;
+				return 0; // 成功
+			}
+			
+			// 检查是否包含ERROR
+			if (strstr((const char*)xUSART.USART1ReceivedBuffer, "ERROR") != NULL)
+			{
+				// 收到错误！清除标志并返回失败
+				memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+				xUSART.USART1ReceivedNum = 0;
+				return 1; // 错误
+			}
+			
+			// 如果执行到这里，说明我们收到了数据，但不是我们想要的最终结果 (OK 或 ERROR)。
+			// 这可能是模块的回显或其他提示信息。我们不应该立刻返回失败。
+			// 我们要做的只是把缓冲区清零，然后让 while 循环继续，等待下一条信息的到来。
+			xUSART.USART1ReceivedNum = 0;
+		}
         delay_ms(1);
         time_start++;
     }

@@ -135,16 +135,26 @@ void USART1_IRQHandler(void)
     }
 
     // 空闲中断, 用于配合接收中断，以判断一帧数据的接收完成
-    if (USART1->SR & (1 << 4))                                       // 检查IDLE(空闲中断标志位); IDLE中断标志清理方法：序列清零，USART1 ->SR;  USART1 ->DR;
-    {
-        xUSART.USART1ReceivedNum  = 0;                               // 把接收到的数据字节数清0
-        memcpy(xUSART.USART1ReceivedBuffer, RxTemp, U1_RX_BUF_SIZE); // 把本帧接收到的数据，存放到全局变量xUSART.USARTxReceivedBuffer中, 等待处理; 注意：复制的是整个数组，包括0值，以方便字符串数据
-        xUSART.USART1ReceivedNum  = cnt;                             // 把接收到的字节数，存放到全局变量xUSART.USARTxReceivedCNT中；
-        cnt = 0;                                                     // 接收字节数累计器，清零; 准备下一次的接收
-        memset(RxTemp, 0, U1_RX_BUF_SIZE);                           // 接收数据缓存数组，清零; 准备下一次的接收
-        USART1 ->SR;
-        USART1 ->DR;                                 // 清零IDLE中断标志位!! 序列清零，顺序不能错!!
-    }
+    if (USART1->SR & (1 << 4))
+	{
+		/* 1. 先把接收到的有效数据从临时区复制到全局缓冲区 */
+		//    注意：只复制 cnt 个字节，而不是整个缓冲区，这样更高效安全
+		memcpy(xUSART.USART1ReceivedBuffer, RxTemp, cnt);
+		
+		/* 2. 在数据末尾手动添加字符串结束符，确保字符串操作函数(如strstr)能正常工作 */
+		xUSART.USART1ReceivedBuffer[cnt] = '\0';
+		
+		/* 3. 最后一步！更新全局接收字节计数。这就像升起一个旗帜，告诉主循环"数据准备好了！" */
+		xUSART.USART1ReceivedNum  = cnt;
+		
+		/* 4. 清理临时变量和计数器，为下一次接收做准备 */
+		cnt = 0;
+		memset(RxTemp, 0, U1_RX_BUF_SIZE);
+		
+		/* 5. 清除IDLE中断标志位 */
+		USART1 ->SR;
+		USART1 ->DR;
+	}
 
     // 发送中断
     if ((USART1->SR & 1 << 7) && (USART1->CR1 & 1 << 7))             // 检查TXE(发送数据寄存器空)、TXEIE(发送缓冲区空中断使能)
