@@ -60,7 +60,9 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
     USART1_SendString((char*)cmd);
     
     // 通过USART2打印出发送的指令
-    printf(">> Send to Module: %s", cmd);
+    char debug_buffer[256];
+    sprintf(debug_buffer, ">> Send to Module: %s", cmd);
+    USART2_SendString(debug_buffer);
 
     uint32_t time_start = 0;
     while(time_start < timeout_ms)
@@ -71,7 +73,9 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
 			xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
 			
 			// 通过USART2打印出接收到的响应，便于调试
-			printf("<< Recv from Module: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+			char debug_buffer[256];
+			sprintf(debug_buffer, "<< Recv from Module: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+			USART2_SendString(debug_buffer);
 			
 			// 检查是否包含我们期望的响应
 			if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
@@ -101,7 +105,9 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
         time_start++;
     }
     
-    printf("!! Timeout for cmd: %s\r\n", cmd);
+    char debug_buffer[256];
+    sprintf(debug_buffer, "!! Timeout for cmd: %s\r\n", cmd);
+    USART2_SendString(debug_buffer);
     return 1; // 超时
 }
 
@@ -128,17 +134,19 @@ void parse_command(const char* buffer)
         if(len > 0 && len < 128)
         {
              strncpy(command, payload_start+1, len);
-             printf("## Received command from Cloud: %s\r\n", command);
+             char debug_buffer[256];
+             sprintf(debug_buffer, "## Received command from Cloud: %s\r\n", command);
+             USART2_SendString(debug_buffer);
 
              if (strcmp(command, "LED_ON") == 0)
              {
                  
-                 printf("## Action: Turn LED ON\r\n");
+                 USART2_SendString("## Action: Turn LED ON\r\n");
              }
              else if (strcmp(command, "LED_OFF") == 0)
              {
                  
-                 printf("## Action: Turn LED OFF\r\n");
+                 USART2_SendString("## Action: Turn LED OFF\r\n");
              }
         }
     }
@@ -165,44 +173,44 @@ int main(void)
 
     // 3. 开机状态指示
 
-    printf("\r\n\r\n==================================\r\n");
-    printf("IoT Module Program Start...\r\n");
-    printf("==================================\r\n");
+    USART2_SendString("\r\n\r\n==================================\r\n");
+    USART2_SendString("IoT Module Program Start...\r\n");
+    USART2_SendString("==================================\r\n");
 
     // 4. 【核心】物联网模块初始化流程
-    printf("\r\n--- Initializing Module ---\r\n");
+    USART2_SendString("\r\n--- Initializing Module ---\r\n");
     while(send_cmd("AT\r\n", "OK", 1000))
     {
-        printf("AT command failed, retrying...\r\n");
+        USART2_SendString("AT command failed, retrying...\r\n");
         delay_ms(1000);
     }
     
     send_cmd("ATE0\r\n", "OK", 1000);
 
-    printf("\r\n--- Attaching to Network ---\r\n");
+    USART2_SendString("\r\n--- Attaching to Network ---\r\n");
     while(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 2000))
     {
-        printf("Waiting for network attachment...\r\n");
+        USART2_SendString("Waiting for network attachment...\r\n");
         delay_ms(2000);
     }
     
-    printf("\r\n--- Connecting to MQTT Broker ---\r\n");
+    USART2_SendString("\r\n--- Connecting to MQTT Broker ---\r\n");
     send_cmd("AT+QMTCFG=\"version\",0,4\r\n", "OK", 3000);
     send_cmd("AT+QMTOPEN=0,\"mqtt.heclouds.com\",1883\r\n", "+QMTOPEN: 0,0", 8000);
     
     sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", DEVICE_NAME, PRODUCT_ID, AUTH_INFO);
     if(send_cmd(cmd_buffer, "+QMTCONN: 0,0,0", 8000) != 0)
     {
-        printf("\r\n!! MQTT Connect Failed! Program Halted. !!\r\n");
+        USART2_SendString("\r\n!! MQTT Connect Failed! Program Halted. !!\r\n");
         while(1); // 连接失败，卡死在这里
     }
 
     sprintf(cmd_buffer, "AT+QMTSUB=0,1,\"%s\",1\r\n", SUB_TOPIC);
     send_cmd(cmd_buffer, "+QMTSUB: 0,1,0", 5000);
 
-    printf("\r\n==================================\r\n");
-    printf("Initialization Complete. Running...\r\n");
-    printf("==================================\r\n\r\n");
+    USART2_SendString("\r\n==================================\r\n");
+    USART2_SendString("Initialization Complete. Running...\r\n");
+    USART2_SendString("==================================\r\n\r\n");
 
     // 5. 主循环
     while (1)
@@ -211,7 +219,9 @@ int main(void)
         if(xUSART.USART1ReceivedNum > 0)
         {
             xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-            printf("<< Recv from Module (URC): %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+            char debug_buffer[256];
+            sprintf(debug_buffer, "<< Recv from Module (URC): %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+            USART2_SendString(debug_buffer);
             if(strstr((const char*)xUSART.USART1ReceivedBuffer, "+QMTRECV:"))
             {
                 parse_command((const char*)xUSART.USART1ReceivedBuffer);
@@ -228,7 +238,7 @@ int main(void)
 
         sprintf(cmd_buffer, "AT+QMTPUB=0,0,0,0,\"%s\",%d\r\n", PUB_TOPIC, strlen(json_buffer));
         
-        printf("\r\n-> Publishing data...\r\n");
+        USART2_SendString("\r\n-> Publishing data...\r\n");
         if(send_cmd(cmd_buffer, ">", 2000) == 0)
         {
             send_cmd(json_buffer, "OK", 5000);
