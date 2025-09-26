@@ -55,12 +55,12 @@ static void delay_ms(uint32_t ms)
  * @return 0: 成功, 1: 失败/超时
  */
 int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
-{   
-    xUSART.USART1ReceivedNum = 0; 
-    USART1_SendString((char*)cmd);
-    
-    // 通过USART2打印出发送的指令
+{
     char debug_buffer[256];
+    xUSART.USART1ReceivedNum = 0;
+    USART1_SendString((char*)cmd);
+
+    // 通过USART2打印出发送的指令
     sprintf(debug_buffer, ">> Send to Module: %s", cmd);
     USART2_SendString(debug_buffer);
 
@@ -73,7 +73,6 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
 			xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
 			
 			// 通过USART2打印出接收到的响应，便于调试
-			char debug_buffer[256];
 			sprintf(debug_buffer, "<< Recv from Module: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
 			USART2_SendString(debug_buffer);
 			
@@ -105,7 +104,6 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
         time_start++;
     }
     
-    char debug_buffer[256];
     sprintf(debug_buffer, "!! Timeout for cmd: %s\r\n", cmd);
     USART2_SendString(debug_buffer);
     return 1; // 超时
@@ -117,6 +115,7 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
  */
 void parse_command(const char* buffer)
 {
+    char debug_buffer[256];
     char* payload_start = strstr(buffer, ",\"");
     if (!payload_start) return;
     payload_start = strstr(payload_start + 2, ",\"");
@@ -134,7 +133,6 @@ void parse_command(const char* buffer)
         if(len > 0 && len < 128)
         {
              strncpy(command, payload_start+1, len);
-             char debug_buffer[256];
              sprintf(debug_buffer, "## Received command from Cloud: %s\r\n", command);
              USART2_SendString(debug_buffer);
 
