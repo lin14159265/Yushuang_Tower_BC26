@@ -336,7 +336,7 @@
               <MiscControls></MiscControls>
               <Define>STM32F10X_HD, USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>..\User;..\System;..\Libraries\CMSIS;..\Libraries\CMSIS\startup;..\Libraries\FWlib\inc;..\Libraries\FWlib\src;..\bsp\w25qxx;..\bsp\CAN;..\bsp\key;..\bsp\LCD_2.8_ILI9341;..\bsp\LED;..\bsp\USART;..\bsp\XPT2046;..\bsp\ESP8266;..\bsp\RS485;..\bsp\OLED;..\bsp\USART2</IncludePath>
+              <IncludePath>..\User;..\System;..\Libraries\CMSIS;..\Libraries\CMSIS\startup;..\Libraries\FWlib\inc;..\Libraries\FWlib\src;..\bsp\w25qxx;..\bsp\CAN;..\bsp\key;..\bsp\LCD_2.8_ILI9341;..\bsp\LED;..\bsp\USART;..\bsp\XPT2046;..\bsp\ESP8266;..\bsp\RS485;..\bsp\USART2</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>

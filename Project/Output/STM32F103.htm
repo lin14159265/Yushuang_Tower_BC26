@@ -3,7 +3,7 @@
 <title>Static Call Graph - [.\Output\STM32F103.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image .\Output\STM32F103.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060528: Last Updated: Fri Sep 26 16:07:34 2025
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060528: Last Updated: Fri Sep 26 17:37:25 2025
 <BR><P>
 <H3>Maximum Stack Usage =       1464 bytes + Unknown(Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -755,7 +755,7 @@ Global Symbols
 </UL>
 <BR>[Address Reference Count : 1]<UL><LI> printfa.o(i.__0printf)
 </UL>
-<P><STRONG><a name="[46]"></a>main</STRONG> (Thumb, 424 bytes, Stack size 1024 bytes, main.o(i.main))
+<P><STRONG><a name="[46]"></a>main</STRONG> (Thumb, 1404 bytes, Stack size 1024 bytes, main.o(i.main))
 <BR><BR>[Stack]<UL><LI>Max Depth = 1464<LI>Call Chain = main &rArr; parse_command &rArr; USART2_SendString &rArr; USART2_SendData
 </UL>
 <BR>[Calls]<UL><LI><a href="#[81]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;__aeabi_f2d
@@ -789,7 +789,7 @@ Global Symbols
 <BR>[Called By]<UL><LI><a href="#[46]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;main
 </UL>
 
-<P><STRONG><a name="[7d]"></a>send_cmd</STRONG> (Thumb, 158 bytes, Stack size 280 bytes, main.o(i.send_cmd))
+<P><STRONG><a name="[7d]"></a>send_cmd</STRONG> (Thumb, 194 bytes, Stack size 280 bytes, main.o(i.send_cmd))
 <BR><BR>[Stack]<UL><LI>Max Depth = 312<LI>Call Chain = send_cmd &rArr; USART2_SendString &rArr; USART2_SendData
 </UL>
 <BR>[Calls]<UL><LI><a href="#[6d]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;USART2_SendString

@@ -16,6 +16,7 @@
  **              所有OLED代码已被移除，所有调试信息通过printf重定向到USART2输出。
  **
 ====================================================================================================================*/
+
 #include <stm32f10x.h>
 #include "stm32f10x_conf.h"
 #include "system_f103.h"
@@ -105,9 +106,74 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
     
     // ---> 清除标志，将串口数据处理权还给主循环 <---
     g_is_waiting_for_rsp = 0;
+
+    if (result == 1) // 如果循环是因为超时而结束
+    {
+        sprintf(debug_buffer, "!! Timeout for cmd: %s\r\n", cmd);
+        USART2_SendString(debug_buffer);
+        // ---> 新增打印 <---
+        sprintf(debug_buffer, "!! Buffer content on timeout: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+        USART2_SendString(debug_buffer);
+    }
     
     return result;
 }
+
+
+
+
+/**
+ * @brief 仅等待预期响应（send_cmd的简化版）
+ * @param expected_rsp 期待的响应字符串
+ * @param timeout_ms 超时时间
+ * @return 0: 成功, 1: 失败/超时
+ */
+int wait_for_rsp(const char* expected_rsp, uint32_t timeout_ms)
+{
+    char debug_buffer[256];
+    
+    // ---> 设置标志，表示我们开始等待响应 <---
+    g_is_waiting_for_rsp = 1;
+
+    uint32_t time_start = 0;
+    int result = 1; // 默认返回失败/超时
+
+    while(time_start < timeout_ms)
+    {
+        if (xUSART.USART1ReceivedNum > 0)
+        {
+            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
+            
+            if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
+            {
+                result = 0; // 成功
+                break;
+            }
+            if (strstr((const char*)xUSART.USART1ReceivedBuffer, "ERROR") != NULL)
+            {
+                result = 1; // 错误
+                break;
+            }
+        }
+        delay_ms(1);
+        time_start++;
+    }
+
+    if (result == 1) // 如果是因为超时而结束
+    {
+        sprintf(debug_buffer, "!! Timeout while waiting for: %s\r\n", expected_rsp);
+        USART2_SendString(debug_buffer);
+        sprintf(debug_buffer, "!! Buffer content on timeout: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+        USART2_SendString(debug_buffer);
+    }
+    
+    // ---> 清除标志，将串口数据处理权还给主循环 <---
+    g_is_waiting_for_rsp = 0;
+    
+    return result;
+}
+
+
 
 /**
  * @brief 解析服务器下发的命令
@@ -177,23 +243,27 @@ int main(void)
 
     // 4. 【核心】物联网模块初始化流程
     USART2_SendString("\r\n--- Initializing Module ---\r\n");
+
     while(send_cmd("AT\r\n", "OK", 1000))
     {
         USART2_SendString("AT command failed, retrying...\r\n");
         delay_ms(1000);
     }
     
-
-
     send_cmd("ATE0\r\n", "OK", 1000);
-    //这个是干什么的？
 
     USART2_SendString("\r\n--- Attaching to Network ---\r\n");
-    while(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 2000))
+    // 必须严格等待 "+CGATT: 1"
+    while(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000)) 
     {
         USART2_SendString("Waiting for network attachment...\r\n");
-        delay_ms(2000);
+        // 这里可以增加打印接收到的内容，方便调试
+        char debug_buffer[256];
+        sprintf(debug_buffer, "!! Current buffer: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+        USART2_SendString(debug_buffer);
+        delay_ms(3000); // 给模块更长的搜索网络时间
     }
+    USART2_SendString("## Network Attached Successfully! ##\r\n"); // 成功后打印一下，给自己信心
     
     USART2_SendString("\r\n--- Connecting to MQTT Broker ---\r\n");
     send_cmd("AT+QMTCFG=\"version\",0,4\r\n", "OK", 3000);
@@ -212,14 +282,16 @@ int main(void)
     USART2_SendString("\r\n==================================\r\n");
     USART2_SendString("Initialization Complete. Running...\r\n");
     USART2_SendString("==================================\r\n\r\n");
+    
+
 
     // 5. 主循环
     while (1)
     {
         // --- 检查是否有服务器下发的命令 ---
-        // ---> 只有在不等待AT指令响应的时候，才处理主动上报的数据 <---
         if(g_is_waiting_for_rsp == 0 && xUSART.USART1ReceivedNum > 0)
         {
+            // ... 这部分处理URC的代码保持不变 ...
             xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
             char debug_buffer[256];
             sprintf(debug_buffer, "<< Recv from Module (URC): %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
@@ -229,28 +301,50 @@ int main(void)
                 parse_command((const char*)xUSART.USART1ReceivedBuffer);
             }
             
-            // 处理完后清空，准备接收下一次上报
             memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
             xUSART.USART1ReceivedNum = 0;
         }
 
-        // --- 定时上报数据 ---
+        // --- 定时上报数据 (已修改为正确的两阶段流程) ---
         float temperature = 25.8;
         message_id++;
 
+        // 1. 准备JSON数据和AT指令
         sprintf(json_buffer, "{\"id\":\"%ld\",\"dp\":{\"temp\":[{\"v\":%.1f}]}}",
                 message_id, temperature);
 
         sprintf(cmd_buffer, "AT+QMTPUB=0,0,0,0,\"%s\",%d\r\n", PUB_TOPIC, strlen(json_buffer));
         
-        USART2_SendString("\r\n-> Publishing data...\r\n");
+        USART2_SendString("\r\n-> Publishing data step 1/2: Send command...\r\n");
+
+        // 2. 发送第一阶段指令，并等待 '>' 符号
         if(send_cmd(cmd_buffer, ">", 2000) == 0)
         {
-            send_cmd(json_buffer, "OK", 5000);
+            USART2_SendString("-> Publishing data step 2/2: Send payload...\r\n");
+            
+            // 3. (关键) 收到'>'后，直接发送JSON数据负载，而不是用send_cmd
+            //    在发送前最好也清空一下接收缓冲区，以防'>'的残留影响后续判断
+            memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+            xUSART.USART1ReceivedNum = 0;
+            
+            USART1_SendString(json_buffer); // 直接发送
+            
+            // 4. (关键) 调用新的辅助函数等待最终的 "OK" 或 "+QMTPUB" 响应
+            if(wait_for_rsp("OK", 5000) == 0)
+            {
+                USART2_SendString("## Publish Success! ##\r\n");
+            }
+            else
+            {
+                USART2_SendString("!! Publish Failed after sending payload. !!\r\n");
+            }
         }
-        
- 
+        else
+        {
+            USART2_SendString("!! Publish Failed: Did not receive '>'. !!\r\n");
+        }
         
         delay_ms(15000);
     }
 }
+
