@@ -117,51 +117,47 @@ static uint8_t U1TxBuffer[256] ;    // 用于中断发送：环形缓冲区，25
 static uint8_t U1TxCounter = 0 ;    // 用于中断发送：标记已发送的字节数(环形)
 static uint8_t U1TxCount   = 0 ;    // 用于中断发送：标记将要发送的字节数(环形)
 
+// 文件: bsp_usart.c
+
 void USART1_IRQHandler(void)
 {
-    static uint16_t cnt = 0;                                         // 接收字节数累计：每一帧数据已接收到的字节数
-    static uint8_t  RxTemp[U1_RX_BUF_SIZE];                          // 接收数据缓存数组：每新接收１个字节，先顺序存放到这里，当一帧接收完(发生空闲中断), 再转存到全局变量：xUSART.USARTxReceivedBuffer[xx]中；
+    // static uint16_t cnt = 0;  //<-- 不再需要这个静态的cnt
+    // static uint8_t  RxTemp[U1_RX_BUF_SIZE]; //<-- 也不再需要这个临时数组
 
     // 接收中断
-    if (USART1->SR & (1 << 5))                                       // 检查RXNE(读数据寄存器非空标志位); RXNE中断清理方法：读DR时自动清理；
+    if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)
     {
-        if ((cnt >= U1_RX_BUF_SIZE))//||(xUSART.USART1ReceivedFlag==1// 判断1: 当前帧已接收到的数据量，已满(缓存区), 为避免溢出，本包后面接收到的数据直接舍弃．
+        // 检查缓冲区是否已满，防止溢出
+        if(xUSART.USART1ReceivedNum < U1_RX_BUF_SIZE)
         {
-            // 判断2: 如果之前接收好的数据包还没处理，就放弃新数据，即，新数据帧不能覆盖旧数据帧，直至旧数据帧被处理．缺点：数据传输过快于处理速度时会掉包；好处：机制清晰，易于调试
-            USART1->DR;                                              // 读取数据寄存器的数据，但不保存．主要作用：读DR时自动清理接收中断标志；
-            return;
+            // 直接将接收到的数据追加到全局缓冲区的末尾
+            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum++] = USART_ReceiveData(USART1);
         }
-        RxTemp[cnt++] = USART1->DR ;                                 // 把新收到的字节数据，顺序存放到RXTemp数组中；注意：读取DR时自动清零中断位；
+        else
+        {
+            // 缓冲区满了，丢弃数据，但要读一下DR来清除中断标志
+            USART_ReceiveData(USART1);
+        }
+        // 注意：RXNE标志在读取DR后会自动清除
     }
 
-    // 空闲中断, 用于配合接收中断，以判断一帧数据的接收完成
-    if (USART1->SR & (1 << 4))
-	{
-		/* 1. 先把接收到的有效数据从临时区复制到全局缓冲区 */
-		//    注意：只复制 cnt 个字节，而不是整个缓冲区，这样更高效安全
-		memcpy(xUSART.USART1ReceivedBuffer, RxTemp, cnt);
-		
-		/* 2. 在数据末尾手动添加字符串结束符，确保字符串操作函数(如strstr)能正常工作 */
-		xUSART.USART1ReceivedBuffer[cnt] = '\0';
-		
-		/* 3. 最后一步！更新全局接收字节计数。这就像升起一个旗帜，告诉主循环"数据准备好了！" */
-		xUSART.USART1ReceivedNum  = cnt;
-		
-		/* 4. 清理临时变量和计数器，为下一次接收做准备 */
-		cnt = 0;
-		memset(RxTemp, 0, U1_RX_BUF_SIZE);
-		
-		/* 5. 清除IDLE中断标志位 */
-		USART1->SR;
-		USART1->DR;                                 // 清零IDLE中断标志位!! 序列清零，顺序不能错!!
-	}
-
-    // 发送中断
-    if ((USART1->SR & 1 << 7) && (USART1->CR1 & 1 << 7))             // 检查TXE(发送数据寄存器空)、TXEIE(发送缓冲区空中断使能)
+    // 空闲中断, 在这种模式下，空闲中断可以什么都不做，或者只用于一些特殊逻辑
+    // 为了兼容您原来的设计，我们保留空闲中断的清除操作
+    if(USART_GetITStatus(USART1, USART_IT_IDLE) != RESET)
     {
-        USART1->DR = U1TxBuffer[U1TxCounter++];                      // 读取数据寄存器值；注意：读取DR时自动清零中断位；
+        // 空闲中断的清除方法是先读SR再读DR
+        // 因为上面的RXNE中断可能没发生，所以这里需要安全地读一下
+        volatile uint16_t temp;
+        temp = USART1->SR;
+        temp = USART1->DR;
+    }
+
+    // 发送中断 (这部分逻辑不变)
+    if ((USART1->SR & 1 << 7) && (USART1->CR1 & 1 << 7))
+    {
+        USART1->DR = U1TxBuffer[U1TxCounter++];
         if (U1TxCounter == U1TxCount)
-            USART1->CR1 &= ~(1 << 7);                                // 已发送完成，关闭发送缓冲区空置中断 TXEIE
+            USART1->CR1 &= ~(1 << 7);
     }
 }
 

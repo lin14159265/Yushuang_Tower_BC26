@@ -25,6 +25,8 @@
 #include "bsp_key.h"
 #include "bsp_usart.h"
 
+volatile uint8_t g_is_waiting_for_rsp = 0;
+
 /* ================== 用户代码: 物联网平台信息 START ================== */
 
 // --- 1. OneNET 连接信息 ---
@@ -48,7 +50,7 @@ static void delay_ms(uint32_t ms)
 }
 
 /**
- * @brief 发送AT指令并等待预期响应（使用 bsp_usart 驱动）
+ * @brief 发送AT指令并等待预期响应（改进版，兼容标准库）
  * @param cmd 要发送的指令
  * @param expected_rsp 期待的响应字符串，例如 "OK"
  * @param timeout_ms 超时时间
@@ -57,56 +59,54 @@ static void delay_ms(uint32_t ms)
 int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
 {
     char debug_buffer[256];
+    
+    // ---> 设置标志，表示我们开始等待响应 <---
+    g_is_waiting_for_rsp = 1;
+
+    memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
     xUSART.USART1ReceivedNum = 0;
+    
     USART1_SendString((char*)cmd);
 
-    // 通过USART2打印出发送的指令
     sprintf(debug_buffer, ">> Send to Module: %s", cmd);
     USART2_SendString(debug_buffer);
 
     uint32_t time_start = 0;
+    int result = 1; // 默认返回失败/超时
+
     while(time_start < timeout_ms)
     {
         if (xUSART.USART1ReceivedNum > 0)
-		{
-			// 注意：在中断里我们已经加了'\0'，这里可以不加，但为了保险起见加上也无妨。
-			xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-			
-			// 通过USART2打印出接收到的响应，便于调试
-			sprintf(debug_buffer, "<< Recv from Module: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-			USART2_SendString(debug_buffer);
-			
-			// 检查是否包含我们期望的响应
-			if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
-			{
-				// 找到了！清除标志并返回成功
-				memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE); // 清空缓冲区是个好习惯
-				xUSART.USART1ReceivedNum = 0;
-				return 0; // 成功
-			}
-			
-			// 检查是否包含ERROR
-			if (strstr((const char*)xUSART.USART1ReceivedBuffer, "ERROR") != NULL)
-			{
-				// 收到错误！清除标志并返回失败
-				memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
-				xUSART.USART1ReceivedNum = 0;
-				return 1; // 错误
-			}
-			
-			// 如果执行到这里，说明我们收到了数据，但不是我们想要的最终结果 (OK 或 ERROR)。
-			// 这可能是模块的回显或其他提示信息。我们不应该立刻返回失败。
-			// 我们要做的只是把缓冲区清零，然后让 while 循环继续，等待下一条信息的到来。
-			memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE); // 清空缓冲区
-			xUSART.USART1ReceivedNum = 0;
-		}
+        {
+            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
+            
+            if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
+            {
+                result = 0; // 成功
+                break; // 跳出循环
+            }
+            
+            if (strstr((const char*)xUSART.USART1ReceivedBuffer, "ERROR") != NULL)
+            {
+                result = 1; // 错误
+                break; // 跳出循环
+            }
+        }
+        
         delay_ms(1);
         time_start++;
     }
     
-    sprintf(debug_buffer, "!! Timeout for cmd: %s\r\n", cmd);
-    USART2_SendString(debug_buffer);
-    return 1; // 超时
+    if (result == 1) // 如果循环是因为超时而结束
+    {
+        sprintf(debug_buffer, "!! Timeout for cmd: %s\r\n", cmd);
+        USART2_SendString(debug_buffer);
+    }
+    
+    // ---> 清除标志，将串口数据处理权还给主循环 <---
+    g_is_waiting_for_rsp = 0;
+    
+    return result;
 }
 
 /**
@@ -214,7 +214,8 @@ int main(void)
     while (1)
     {
         // --- 检查是否有服务器下发的命令 ---
-        if(xUSART.USART1ReceivedNum > 0)
+        // ---> 只有在不等待AT指令响应的时候，才处理主动上报的数据 <---
+        if(g_is_waiting_for_rsp == 0 && xUSART.USART1ReceivedNum > 0)
         {
             xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
             char debug_buffer[256];
@@ -224,6 +225,9 @@ int main(void)
             {
                 parse_command((const char*)xUSART.USART1ReceivedBuffer);
             }
+            
+            // 处理完后清空，准备接收下一次上报
+            memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
             xUSART.USART1ReceivedNum = 0;
         }
 

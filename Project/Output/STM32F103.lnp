@@ -2,7 +2,6 @@
 ".\output\main.o"
 ".\output\stm32f10x_it.o"
 ".\output\bsp_led.o"
-".\output\bsp_oled.o"
 ".\output\bsp_usart.o"
 ".\output\bsp_key.o"
 ".\output\system_f103.o"

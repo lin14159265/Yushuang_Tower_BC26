@@ -406,11 +406,6 @@
               <FilePath>..\bsp\LED\bsp_led.c</FilePath>
             </File>
             <File>
-              <FileName>bsp_oled.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\bsp\OLED\bsp_oled.c</FilePath>
-            </File>
-            <File>
               <FileName>bsp_usart.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\bsp\USART\bsp_usart.c</FilePath>
