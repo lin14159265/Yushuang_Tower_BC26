@@ -183,7 +183,10 @@ int main(void)
         delay_ms(1000);
     }
     
+
+
     send_cmd("ATE0\r\n", "OK", 1000);
+    //这个是干什么的？
 
     USART2_SendString("\r\n--- Attaching to Network ---\r\n");
     while(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 2000))
