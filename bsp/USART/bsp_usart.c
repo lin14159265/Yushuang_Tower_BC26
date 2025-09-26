@@ -152,8 +152,8 @@ void USART1_IRQHandler(void)
 		memset(RxTemp, 0, U1_RX_BUF_SIZE);
 		
 		/* 5. 清除IDLE中断标志位 */
-		USART1 ->SR;
-		USART1 ->DR;
+		USART1->SR;
+		USART1->DR;                                 // 清零IDLE中断标志位!! 序列清零，顺序不能错!!
 	}
 
     // 发送中断
@@ -313,7 +313,7 @@ void USART2_Init(uint32_t baudrate)
     USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx; // 使能收、发模式
     USART_Init(USART2, &USART_InitStructure);                       // 初始化串口
 
-    USART_ITConfig(USART2, USART_IT_TXE, DISABLE);
+    USART_ITConfig(USART2, USART_IT_TXE, ENABLE);                   // 使能发送中断
     USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);                  // 使能接受中断
     USART_ITConfig(USART2, USART_IT_IDLE, ENABLE);                  // 使能空闲中断
 
@@ -954,19 +954,19 @@ void _sys_exit(int x)
 
 
 
-int fputc(int ch, FILE *f)                   // 重定向fputc函数，使printf的输出，由fputc输出到UART,  这里使用串口1(USART1)
+int fputc(int ch, FILE *f)                   // 重定向fputc函数，使printf的输出，由fputc输出到UART,  这里使用串口2(USART2)
 {
-#if 1                                        // 方式1-使用常用的poll方式发送数据，比较容易理解，但等待耗时大  
-    while ((USART1->SR & 0X40) == 0);        // 等待上一次串口数据发送完成
-    USART1->DR = (u8) ch;                    // 写DR,串口1将发送数据
+#if 0                                        // 方式1-使用常用的poll方式发送数据，比较容易理解，但等待耗时大
+    while ((USART2->SR & 0X40) == 0);        // 等待上一次串口数据发送完成
+    USART2->DR = (u8) ch;                    // 写DR,串口2将发送数据
     return ch;
 #else                                        // 方式2-使用queue+中断方式发送数据; 无需像方式1那样等待耗时，但要借助已写好的函数、环形缓冲
     uint8_t c[1] = {(uint8_t)ch};
-    if (USARTx_DEBUG == USART1)    vUSART1_SendData(c, 1);
-    if (USARTx_DEBUG == USART2)    vUSART2_SendData(c, 1);
-    if (USARTx_DEBUG == USART3)    vUSART3_SendData(c, 1);
-    if (USARTx_DEBUG == UART4)     vUART4_SendData(c, 1);
-    if (USARTx_DEBUG == UART5)     vUART5_SendData(c, 1);
+    if (USARTx_DEBUG == USART1)    USART1_SendData(c, 1);
+    if (USARTx_DEBUG == USART2)    USART2_SendData(c, 1);
+    if (USARTx_DEBUG == USART3)    USART3_SendData(c, 1);
+    if (USARTx_DEBUG == UART4)     UART4_SendData(c, 1);
+    if (USARTx_DEBUG == UART5)     UART5_SendData(c, 1);
     return ch;
 #endif
 }

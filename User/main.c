@@ -94,6 +94,7 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
 			// 如果执行到这里，说明我们收到了数据，但不是我们想要的最终结果 (OK 或 ERROR)。
 			// 这可能是模块的回显或其他提示信息。我们不应该立刻返回失败。
 			// 我们要做的只是把缓冲区清零，然后让 while 循环继续，等待下一条信息的到来。
+			memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE); // 清空缓冲区
 			xUSART.USART1ReceivedNum = 0;
 		}
         delay_ms(1);
