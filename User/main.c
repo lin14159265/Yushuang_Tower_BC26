@@ -253,55 +253,160 @@ int main(void)
     
     send_cmd("ATE0\r\n", "OK", 1000);
 
-    // 获取IMEI号 (参考示例代码)  // 🔧 【新增】添加注释
-    send_cmd("AT+CIMI\r\n", "OK", 2000);  // 🔧 【新增】参考示例代码添加IMEI获取指令
+    USART2_SendString("\r\n--- Network Registration Process ---\r\n");
 
-    USART2_SendString("\r\n--- Attaching to Network ---\r\n");
-    // 必须严格等待 "+CGATT: 1"
-    while(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000)) 
+    // 🔧 【改进】完整的网络注册流程
+    int network_ready = 0;
+    int max_network_retries = 30; // 最多重试30次，约90秒
+
+    for(int retry = 0; retry < max_network_retries && !network_ready; retry++)
     {
-        USART2_SendString("Waiting for network attachment...\r\n");
+        USART2_SendString("========================================\r\n");
+        char status_buffer[256];
+        sprintf(status_buffer, "Network Check Attempt %d/%d\r\n", retry + 1, max_network_retries);
+        USART2_SendString(status_buffer);
 
+        // 1. 检查信号质量
+        USART2_SendString("1. Checking signal quality...\r\n");
+        memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+        xUSART.USART1ReceivedNum = 0;
+        USART1_SendString("AT+CSQ\r\n");
+        delay_ms(1000);
 
-        // --- 新增调试代码 START ---
-        if (retry_count % 3 == 0) // 每循环3次，就查询一下信号质量
+        if (xUSART.USART1ReceivedNum > 0)
         {
-            USART2_SendString("Checking signal quality...\r\n");
-            send_cmd("AT+CSQ\r\n", "OK", 2000); // 发送CSQ指令
-            
+            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
             char debug_buffer[256];
-            sprintf(debug_buffer, "!! CSQ Response: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-            USART2_SendString(debug_buffer); // 打印CSQ的返回结果
+            sprintf(debug_buffer, "   CSQ Response: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+            USART2_SendString(debug_buffer);
         }
-        retry_count++;
-        // --- 新增调试代码 END ---
 
+        // 2. 检查网络注册状态
+        USART2_SendString("2. Checking network registration...\r\n");
+        memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+        xUSART.USART1ReceivedNum = 0;
+        USART1_SendString("AT+CEREG?\r\n");
+        delay_ms(1000);
 
+        if (xUSART.USART1ReceivedNum > 0)
+        {
+            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
+            char debug_buffer[256];
+            sprintf(debug_buffer, "   CEREG Response: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+            USART2_SendString(debug_buffer);
+        }
 
-        // 这里可以增加打印接收到的内容，方便调试
-        char debug_buffer[256];
-        sprintf(debug_buffer, "!! Current buffer: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-        USART2_SendString(debug_buffer);
-        delay_ms(3000); // 给模块更长的搜索网络时间
+        // 3. 检查GPRS附着状态
+        USART2_SendString("3. Checking GPRS attachment...\r\n");
+        memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+        xUSART.USART1ReceivedNum = 0;
+        USART1_SendString("AT+CGATT?\r\n");
+        delay_ms(1000);
+
+        if (xUSART.USART1ReceivedNum > 0)
+        {
+            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
+            char debug_buffer[512];
+            sprintf(debug_buffer, "   CGATT Response: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+            USART2_SendString(debug_buffer);
+
+            // 检查是否已附着
+            if (strstr((const char*)xUSART.USART1ReceivedBuffer, "+CGATT: 1") != NULL)
+            {
+                USART2_SendString("## ✅ Network Ready! ##\r\n");
+                network_ready = 1;
+                break;
+            }
+            else
+            {
+                USART2_SendString("   ❌ Network not ready yet\r\n");
+            }
+        }
+
+        // 4. 如果还没有准备好，等待更长时间
+        if (!network_ready)
+        {
+            USART2_SendString("4. Waiting 5 seconds before next check...\r\n");
+            delay_ms(5000);
+        }
     }
-    USART2_SendString("## Network Attached Successfully! ##\r\n"); // 成功后打印一下，给自己信心
-    
-    USART2_SendString("\r\n--- Connecting to MQTT Broker ---\r\n");
-    send_cmd("AT+QMTCFG=\"version\",0,4\r\n", "OK", 3000);
-    send_cmd("AT+QMTOPEN=0,\"mqtt.heclouds.com\",1883\r\n", "+QMTOPEN: 0,0", 8000);
-    
-    sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", DEVICE_NAME, PRODUCT_ID, AUTH_INFO);
-    if(send_cmd(cmd_buffer, "+QMTCONN: 0,0,0", 8000) != 0)
+
+    if (!network_ready)
     {
-        USART2_SendString("\r\n!! MQTT Connect Failed! Program Halted. !!\r\n");
-        while(1); // 连接失败，卡死在这里
+        USART2_SendString("!! ERROR: Network not ready after maximum retries!\r\n");
+        USART2_SendString("!! Troubleshooting:\r\n");
+        USART2_SendString("!! 1. Check BC26 module power (red LED should be on)\r\n");
+        USART2_SendString("!! 2. Check antenna connection\r\n");
+        USART2_SendString("!! 3. Check SIM card (should be inserted correctly)\r\n");
+        USART2_SendString("!! 4. Check network coverage in your area\r\n");
+        USART2_SendString("!! 5. Try restarting the module\r\n");
+        USART2_SendString("!! Program will continue but MQTT may fail!\r\n\r\n");
     }
+    
+    // 只有在网络准备好的情况下才尝试MQTT连接
+    if (network_ready)
+    {
+        USART2_SendString("\r\n--- Connecting to MQTT Broker ---\r\n");
 
-    sprintf(cmd_buffer, "AT+QMTSUB=0,1,\"%s\",1\r\n", SUB_TOPIC);
-    send_cmd(cmd_buffer, "+QMTSUB: 0,1,0", 5000);
+        // 配置MQTT版本
+        if(send_cmd("AT+QMTCFG=\"version\",0,4\r\n", "OK", 3000) != 0)
+        {
+            USART2_SendString("!! MQTT Configuration Failed!\r\n");
+        }
+
+        // 打开MQTT连接
+        if(send_cmd("AT+QMTOPEN=0,\"mqtt.heclouds.com\",1883\r\n", "+QMTOPEN: 0,0", 8000) != 0)
+        {
+            USART2_SendString("!! MQTT Open Connection Failed!\r\n");
+            USART2_SendString("!! Buffer content: ");
+            USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
+            USART2_SendString("\r\n");
+        }
+        else
+        {
+            USART2_SendString("✅ MQTT Connection Opened Successfully!\r\n");
+
+            // 连接到MQTT服务器
+            sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", DEVICE_NAME, PRODUCT_ID, AUTH_INFO);
+            if(send_cmd(cmd_buffer, "+QMTCONN: 0,0,0", 8000) != 0)
+            {
+                USART2_SendString("!! MQTT Authentication Failed!\r\n");
+                USART2_SendString("!! Buffer content: ");
+                USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
+                USART2_SendString("\r\n");
+            }
+            else
+            {
+                USART2_SendString("✅ MQTT Authentication Successful!\r\n");
+
+                // 订阅主题
+                sprintf(cmd_buffer, "AT+QMTSUB=0,1,\"%s\",1\r\n", SUB_TOPIC);
+                if(send_cmd(cmd_buffer, "+QMTSUB: 0,1,0", 5000) == 0)
+                {
+                    USART2_SendString("✅ MQTT Topic Subscription Successful!\r\n");
+                }
+                else
+                {
+                    USART2_SendString("!! MQTT Topic Subscription Failed!\r\n");
+                }
+            }
+        }
+    }
+    else
+    {
+        USART2_SendString("!! Skipping MQTT connection due to network issues!\r\n");
+        USART2_SendString("!! Please fix network problems and restart the device.\r\n");
+    }
 
     USART2_SendString("\r\n==================================\r\n");
-    USART2_SendString("Initialization Complete. Running...\r\n");
+    if (network_ready)
+    {
+        USART2_SendString("✅ Initialization Complete - IoT Ready!\r\n");
+    }
+    else
+    {
+        USART2_SendString("⚠️  Initialization Complete - Network Issues!\r\n");
+    }
     USART2_SendString("==================================\r\n\r\n");
     
 
@@ -326,44 +431,57 @@ int main(void)
             xUSART.USART1ReceivedNum = 0;
         }
 
-        // --- 定时上报数据 (参考示例代码，增加湿度数据，保持temp字段名) ---  // 🔧 【修改】更新注释
-        float temperature = 25.8;
-        float humidity = 65.0;  // 🔧 【新增】添加湿度变量
-        message_id++;
-
-        // 1. 准备JSON数据和AT指令 (保持temp字段名，增加湿度数据)  // 🔧 【修改】更新注释
-        sprintf(json_buffer, "{\"id\":\"%ld\",\"dp\":{\"temp\":[{\"v\":%.1f}],\"Humidity\":[{\"v\":%.1f}]}}",  // 🔧 【修改】保持temp字段，增加Humidity字段
-                message_id, temperature, humidity);  // 🔧 【修改】添加湿度参数
-
-        sprintf(cmd_buffer, "AT+QMTPUB=0,0,0,0,\"%s\",%d\r\n", PUB_TOPIC, strlen(json_buffer));
-        
-        USART2_SendString("\r\n-> Publishing data step 1/2: Send command...\r\n");
-
-        // 2. 发送第一阶段指令，并等待 '>' 符号
-        if(send_cmd(cmd_buffer, ">", 2000) == 0)
+        // 🔧 【改进】只有在网络和MQTT都连接成功的情况下才发送数据
+        if (network_ready)
         {
-            USART2_SendString("-> Publishing data step 2/2: Send payload...\r\n");
-            
-            // 3. (关键) 收到'>'后，直接发送JSON数据负载，而不是用send_cmd
-            //    在发送前最好也清空一下接收缓冲区，以防'>'的残留影响后续判断
-            memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
-            xUSART.USART1ReceivedNum = 0;
-            
-            USART1_SendString(json_buffer); // 直接发送
-            
-            // 4. (关键) 调用新的辅助函数等待最终的 "OK" 或 "+QMTPUB" 响应
-            if(wait_for_rsp("OK", 5000) == 0)
+            // --- 定时上报数据 (参考示例代码，增加湿度数据，保持temp字段名) ---
+            float temperature = 25.8;
+            float humidity = 65.0;
+            message_id++;
+
+            // 1. 准备JSON数据和AT指令 (保持temp字段名，增加湿度数据)
+            sprintf(json_buffer, "{\"id\":\"%ld\",\"dp\":{\"temp\":[{\"v\":%.1f}],\"Humidity\":[{\"v\":%.1f}]}}",
+                    message_id, temperature, humidity);
+
+            sprintf(cmd_buffer, "AT+QMTPUB=0,0,0,0,\"%s\",%d\r\n", PUB_TOPIC, strlen(json_buffer));
+
+            USART2_SendString("\r\n-> Publishing data step 1/2: Send command...\r\n");
+
+            // 2. 发送第一阶段指令，并等待 '>' 符号
+            if(send_cmd(cmd_buffer, ">", 2000) == 0)
             {
-                USART2_SendString("## Publish Success! ##\r\n");
+                USART2_SendString("-> Publishing data step 2/2: Send payload...\r\n");
+
+                // 3. 收到'>'后，直接发送JSON数据负载
+                memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+                xUSART.USART1ReceivedNum = 0;
+
+                USART1_SendString(json_buffer);
+
+                // 4. 等待最终的 "OK" 响应
+                if(wait_for_rsp("OK", 5000) == 0)
+                {
+                    USART2_SendString("## ✅ Publish Success! ##\r\n");
+                }
+                else
+                {
+                    USART2_SendString("!! ❌ Publish Failed after sending payload. !!\r\n");
+                }
             }
             else
             {
-                USART2_SendString("!! Publish Failed after sending payload. !!\r\n");
+                USART2_SendString("!! ❌ Publish Failed: Did not receive '>'. !!\r\n");
             }
         }
         else
         {
-            USART2_SendString("!! Publish Failed: Did not receive '>'. !!\r\n");
+            // 网络未连接时，显示状态信息
+            static int status_counter = 0;
+            if (status_counter++ % 20 == 0) // 每20个循环（约5分钟）显示一次状态
+            {
+                USART2_SendString("\r\n⚠️  Network not ready - skipping data publish\r\n");
+                USART2_SendString("   Please check module status and restart if needed\r\n");
+            }
         }
         
         delay_ms(15000);
