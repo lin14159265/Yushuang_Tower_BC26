@@ -76,10 +76,13 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
     uint32_t time_start = 0;
     int result = 1; // 默认返回失败/超时
 
+    uint32_t last_data_time = 0;
     while(time_start < timeout_ms)
     {
         if (xUSART.USART1ReceivedNum > 0)
         {
+            last_data_time = time_start;
+
             // 🔧 【修复】创建临时缓冲区进行字符串匹配，避免干扰原始数据
             char temp_buffer[U1_RX_BUF_SIZE + 1];
             memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
@@ -96,6 +99,14 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
                 result = 1; // 错误
                 break; // 跳出循环
             }
+        }
+
+        // 🔧 【新增】如果500ms内没有新数据，可以提前退出（响应已完成）
+        if(time_start - last_data_time > 500 && last_data_time > 0)
+        {
+            // 再等待一下确保数据完整
+            delay_ms(200);
+            break;
         }
 
         delay_ms(1);
@@ -360,49 +371,86 @@ int main(void)
             USART2_SendString("   ✅ GPRS attachment command sent\r\n");
         }
 
-        // 4. 检查GPRS附着状态 - 使用专门的检测函数
+        // 4. 检查GPRS附着状态 - 重新设计检测逻辑
         USART2_SendString("4. Checking GPRS attachment status...\r\n");
 
-        // 🔧 【新增】专门的CGATT检测函数，避免send_cmd的问题
-        int check_cgatt_status(void)
+        // 🔧 【重写】更智能的CGATT检测函数
+        int check_cgatt_status_improved(void)
         {
+            USART2_SendString("   Sending AT+CGATT?...\r\n");
             memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
             xUSART.USART1ReceivedNum = 0;
             USART1_SendString("AT+CGATT?\r\n");
 
-            // 等待响应
-            uint32_t wait_time = 0;
-            while(wait_time < 3000 && xUSART.USART1ReceivedNum == 0)
-            {
-                delay_ms(10);
-                wait_time += 10;
-            }
+            // 等待完整响应（BC26通常需要时间返回完整响应）
+            uint32_t total_wait = 0;
+            uint32_t last_data_time = 0;
+            int found_cgatt = 0;
+            int found_ok = 0;
 
-            if(xUSART.USART1ReceivedNum > 0)
+            while(total_wait < 5000) // 总共等待5秒
             {
-                // 创建临时缓冲区进行安全检查
-                char temp_buffer[U1_RX_BUF_SIZE + 1];
-                memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
-                temp_buffer[xUSART.USART1ReceivedNum] = '\0';
+                delay_ms(50); // 每50ms检查一次
+                total_wait += 50;
 
-                // 检查是否包含 +CGATT: 1
-                if(strstr(temp_buffer, "+CGATT: 1") != NULL)
+                // 检查是否有新数据到达
+                if(xUSART.USART1ReceivedNum > 0)
                 {
-                    return 1; // 成功
-                }
-                else
-                {
-                    // 输出实际收到的内容用于调试
+                    last_data_time = total_wait;
+
+                    // 创建临时缓冲区检查
+                    char temp_buffer[U1_RX_BUF_SIZE + 1];
+                    memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
+                    temp_buffer[xUSART.USART1ReceivedNum] = '\0';
+
+                    // 检查是否包含期望的响应
+                    if(strstr(temp_buffer, "+CGATT: 1") != NULL)
+                    {
+                        found_cgatt = 1;
+                        USART2_SendString("   Found +CGATT: 1 in buffer\r\n");
+                    }
+
+                    if(strstr(temp_buffer, "OK") != NULL)
+                    {
+                        found_ok = 1;
+                        USART2_SendString("   Found OK in buffer\r\n");
+                    }
+
+                    // 🔧 【调试】显示当前缓冲区内容
                     char debug_buffer[512];
-                    sprintf(debug_buffer, "   CGATT Response: %s\r\n", temp_buffer);
+                    sprintf(debug_buffer, "   Buffer (len=%d): %s\r\n", xUSART.USART1ReceivedNum, temp_buffer);
                     USART2_SendString(debug_buffer);
-                    return 0;
+                }
+
+                // 如果2秒内没有新数据，认为响应完成
+                if(total_wait - last_data_time > 2000 && last_data_time > 0)
+                {
+                    USART2_SendString("   Response complete (no new data for 2s)\r\n");
+                    break;
+                }
+
+                // 如果已经找到了两个条件，可以提前退出
+                if(found_cgatt && found_ok)
+                {
+                    USART2_SendString("   Both conditions met, early exit\r\n");
+                    break;
                 }
             }
-            return 0;
+
+            // 最终结果判断
+            if(found_cgatt)
+            {
+                USART2_SendString("   ✅ Final: CGATT check PASSED\r\n");
+                return 1;
+            }
+            else
+            {
+                USART2_SendString("   ❌ Final: CGATT check FAILED\r\n");
+                return 0;
+            }
         }
 
-        if(check_cgatt_status())
+        if(check_cgatt_status_improved())
         {
             USART2_SendString("## ✅ GPRS Attached! Network Ready! ##\r\n");
             network_ready = 1;
