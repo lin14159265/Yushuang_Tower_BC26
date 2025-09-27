@@ -253,11 +253,41 @@ int main(void)
     
     send_cmd("ATE0\r\n", "OK", 1000);
 
+    // 🔧 【新增】给模块更多时间初始化和搜索网络
+    USART2_SendString("\r\n--- Waiting for Module Initialization ---\r\n");
+    USART2_SendString("Giving module 60 seconds to initialize and search for network...\r\n");
+    for(int i = 60; i > 0; i--)
+    {
+        char wait_buffer[64];
+        sprintf(wait_buffer, "Waiting... %d seconds\r\n", i);
+        USART2_SendString(wait_buffer);
+        delay_ms(1000);
+    }
+
+    // 🔧 【新增】检查SIM卡状态
+    USART2_SendString("\r\n--- Checking SIM Card Status ---\r\n");
+    if(send_cmd("AT+CPIN?\r\n", "+CPIN: READY", 5000) != 0)
+    {
+        USART2_SendString("!! ERROR: SIM card not ready or not inserted!\r\n");
+        USART2_SendString("!! Please check SIM card insertion and restart device.\r\n");
+    }
+    else
+    {
+        USART2_SendString("✅ SIM card is ready!\r\n");
+    }
+
+    // 🔧 【新增】检查网络注册状态
+    USART2_SendString("\r\n--- Checking Network Registration ---\r\n");
+    if(send_cmd("AT+COPS?\r\n", "OK", 5000) != 0)
+    {
+        USART2_SendString("!! WARNING: Cannot get network operator info!\r\n");
+    }
+
     USART2_SendString("\r\n--- Network Registration Process ---\r\n");
 
     // 🔧 【改进】完整的网络注册流程
     int network_ready = 0;
-    int max_network_retries = 30; // 最多重试30次，约90秒
+    int max_network_retries = 60; // 最多重试60次，约300秒（5分钟）
 
     for(int retry = 0; retry < max_network_retries && !network_ready; retry++)
     {
@@ -281,12 +311,12 @@ int main(void)
             USART2_SendString(debug_buffer);
         }
 
-        // 2. 检查网络注册状态
-        USART2_SendString("2. Checking network registration...\r\n");
+        // 2. 检查EPS网络注册状态 (NB-IoT使用CEREG)
+        USART2_SendString("2. Checking EPS network registration...\r\n");
         memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
         xUSART.USART1ReceivedNum = 0;
         USART1_SendString("AT+CEREG?\r\n");
-        delay_ms(1000);
+        delay_ms(2000);
 
         if (xUSART.USART1ReceivedNum > 0)
         {
@@ -296,12 +326,23 @@ int main(void)
             USART2_SendString(debug_buffer);
         }
 
-        // 3. 检查GPRS附着状态
-        USART2_SendString("3. Checking GPRS attachment...\r\n");
+        // 3. 尝试主动附着GPRS网络
+        USART2_SendString("3. Attempting GPRS attachment...\r\n");
+        if(send_cmd("AT+CGATT=1\r\n", "OK", 10000) != 0)
+        {
+            USART2_SendString("   ❌ GPRS attachment command failed\r\n");
+        }
+        else
+        {
+            USART2_SendString("   ✅ GPRS attachment command sent\r\n");
+        }
+
+        // 4. 检查GPRS附着状态
+        USART2_SendString("4. Checking GPRS attachment status...\r\n");
         memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
         xUSART.USART1ReceivedNum = 0;
         USART1_SendString("AT+CGATT?\r\n");
-        delay_ms(1000);
+        delay_ms(2000);
 
         if (xUSART.USART1ReceivedNum > 0)
         {
@@ -313,21 +354,21 @@ int main(void)
             // 检查是否已附着
             if (strstr((const char*)xUSART.USART1ReceivedBuffer, "+CGATT: 1") != NULL)
             {
-                USART2_SendString("## ✅ Network Ready! ##\r\n");
+                USART2_SendString("## ✅ GPRS Attached! Network Ready! ##\r\n");
                 network_ready = 1;
                 break;
             }
             else
             {
-                USART2_SendString("   ❌ Network not ready yet\r\n");
+                USART2_SendString("   ❌ GPRS not attached yet\r\n");
             }
         }
 
-        // 4. 如果还没有准备好，等待更长时间
+        // 5. 如果还没有准备好，等待更长时间
         if (!network_ready)
         {
-            USART2_SendString("4. Waiting 5 seconds before next check...\r\n");
-            delay_ms(5000);
+            USART2_SendString("5. Waiting 10 seconds before next check...\r\n");
+            delay_ms(10000);
         }
     }
 
@@ -348,48 +389,99 @@ int main(void)
     {
         USART2_SendString("\r\n--- Connecting to MQTT Broker ---\r\n");
 
-        // 配置MQTT版本
+        // 🔧 【改进】配置MQTT参数
+        USART2_SendString("1. Configuring MQTT parameters...\r\n");
         if(send_cmd("AT+QMTCFG=\"version\",0,4\r\n", "OK", 3000) != 0)
         {
-            USART2_SendString("!! MQTT Configuration Failed!\r\n");
-        }
-
-        // 打开MQTT连接
-        if(send_cmd("AT+QMTOPEN=0,\"mqtt.heclouds.com\",1883\r\n", "+QMTOPEN: 0,0", 8000) != 0)
-        {
-            USART2_SendString("!! MQTT Open Connection Failed!\r\n");
-            USART2_SendString("!! Buffer content: ");
-            USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
-            USART2_SendString("\r\n");
+            USART2_SendString("!! MQTT Version Configuration Failed!\r\n");
         }
         else
         {
-            USART2_SendString("✅ MQTT Connection Opened Successfully!\r\n");
+            USART2_SendString("✅ MQTT Version Configured!\r\n");
+        }
 
-            // 连接到MQTT服务器
-            sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", DEVICE_NAME, PRODUCT_ID, AUTH_INFO);
-            if(send_cmd(cmd_buffer, "+QMTCONN: 0,0,0", 8000) != 0)
+        // 🔧 【改进】设置keepalive参数
+        if(send_cmd("AT+QMTCFG=\"keepalive\",0,60\r\n", "OK", 3000) != 0)
+        {
+            USART2_SendString("!! MQTT Keepalive Configuration Failed!\r\n");
+        }
+        else
+        {
+            USART2_SendString("✅ MQTT Keepalive Configured!\r\n");
+        }
+
+        // 🔧 【改进】重试机制打开MQTT连接
+        int mqtt_connect_retry = 0;
+        int mqtt_connected = 0;
+        int max_mqtt_retries = 5;
+
+        while(mqtt_connect_retry < max_mqtt_retries && !mqtt_connected)
+        {
+            USART2_SendString("========================================\r\n");
+            char mqtt_status_buffer[256];
+            sprintf(mqtt_status_buffer, "MQTT Connection Attempt %d/%d\r\n", mqtt_connect_retry + 1, max_mqtt_retries);
+            USART2_SendString(mqtt_status_buffer);
+
+            // 2. 打开MQTT连接
+            USART2_SendString("2. Opening MQTT connection...\r\n");
+            if(send_cmd("AT+QMTOPEN=0,\"mqtt.heclouds.com\",1883\r\n", "+QMTOPEN: 0,0", 10000) != 0)
             {
-                USART2_SendString("!! MQTT Authentication Failed!\r\n");
+                USART2_SendString("!! MQTT Open Connection Failed!\r\n");
                 USART2_SendString("!! Buffer content: ");
                 USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
                 USART2_SendString("\r\n");
             }
             else
             {
-                USART2_SendString("✅ MQTT Authentication Successful!\r\n");
+                USART2_SendString("✅ MQTT Connection Opened Successfully!\r\n");
 
-                // 订阅主题
-                sprintf(cmd_buffer, "AT+QMTSUB=0,1,\"%s\",1\r\n", SUB_TOPIC);
-                if(send_cmd(cmd_buffer, "+QMTSUB: 0,1,0", 5000) == 0)
+                // 3. 连接到MQTT服务器
+                USART2_SendString("3. Authenticating with MQTT server...\r\n");
+                sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", DEVICE_NAME, PRODUCT_ID, AUTH_INFO);
+                if(send_cmd(cmd_buffer, "+QMTCONN: 0,0,0", 10000) != 0)
                 {
-                    USART2_SendString("✅ MQTT Topic Subscription Successful!\r\n");
+                    USART2_SendString("!! MQTT Authentication Failed!\r\n");
+                    USART2_SendString("!! Buffer content: ");
+                    USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
+                    USART2_SendString("\r\n");
+
+                    // 如果认证失败，关闭连接以便重试
+                    send_cmd("AT+QMTCLOSE=0\r\n", "OK", 3000);
                 }
                 else
                 {
-                    USART2_SendString("!! MQTT Topic Subscription Failed!\r\n");
+                    USART2_SendString("✅ MQTT Authentication Successful!\r\n");
+                    mqtt_connected = 1;
+
+                    // 4. 订阅主题
+                    USART2_SendString("4. Subscribing to topic...\r\n");
+                    sprintf(cmd_buffer, "AT+QMTSUB=0,1,\"%s\",1\r\n", SUB_TOPIC);
+                    if(send_cmd(cmd_buffer, "+QMTSUB: 0,1,0", 5000) == 0)
+                    {
+                        USART2_SendString("✅ MQTT Topic Subscription Successful!\r\n");
+                    }
+                    else
+                    {
+                        USART2_SendString("!! MQTT Topic Subscription Failed!\r\n");
+                    }
                 }
             }
+
+            if(!mqtt_connected)
+            {
+                mqtt_connect_retry++;
+                if(mqtt_connect_retry < max_mqtt_retries)
+                {
+                    USART2_SendString("Waiting 10 seconds before retry...\r\n");
+                    delay_ms(10000);
+                }
+            }
+        }
+
+        if(!mqtt_connected)
+        {
+            USART2_SendString("!! ERROR: MQTT connection failed after maximum retries!\r\n");
+            network_ready = 0; // 标记为未连接，防止后续操作
         }
     }
     else
@@ -412,6 +504,9 @@ int main(void)
 
 
     // 5. 主循环
+    int publish_error_count = 0;
+    int max_publish_errors = 3;
+
     while (1)
     {
         // --- 检查是否有服务器下发的命令 ---
@@ -422,11 +517,19 @@ int main(void)
             char debug_buffer[256];
             sprintf(debug_buffer, "<< Recv from Module (URC): %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
             USART2_SendString(debug_buffer);
+
+            // 🔧 【改进】检查MQTT连接状态
+            if(strstr((const char*)xUSART.USART1ReceivedBuffer, "+QMTSTAT:"))
+            {
+                USART2_SendString("!! WARNING: MQTT connection status received, checking connection...\r\n");
+                // 可以在这里添加重连逻辑
+            }
+
             if(strstr((const char*)xUSART.USART1ReceivedBuffer, "+QMTRECV:"))
             {
                 parse_command((const char*)xUSART.USART1ReceivedBuffer);
             }
-            
+
             memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
             xUSART.USART1ReceivedNum = 0;
         }
@@ -462,28 +565,68 @@ int main(void)
                 if(wait_for_rsp("OK", 5000) == 0)
                 {
                     USART2_SendString("## ✅ Publish Success! ##\r\n");
+                    publish_error_count = 0; // 重置错误计数
                 }
                 else
                 {
                     USART2_SendString("!! ❌ Publish Failed after sending payload. !!\r\n");
+                    publish_error_count++;
+
+                    // 🔧 【改进】错误计数和恢复机制
+                    if(publish_error_count >= max_publish_errors)
+                    {
+                        USART2_SendString("!! Too many publish errors, checking network connection...\r\n");
+
+                        // 检查网络状态
+                        if(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000) != 0)
+                        {
+                            USART2_SendString("!! Network lost! Attempting to reconnect...\r\n");
+                            network_ready = 0; // 标记为未连接
+                        }
+                        else
+                        {
+                            USART2_SendString("!! Network OK, but MQTT may have issues\r\n");
+                        }
+                        publish_error_count = 0;
+                    }
                 }
             }
             else
             {
                 USART2_SendString("!! ❌ Publish Failed: Did not receive '>'. !!\r\n");
+                publish_error_count++;
+
+                if(publish_error_count >= max_publish_errors)
+                {
+                    USART2_SendString("!! Too many command errors, resetting connection...\r\n");
+                    // 可以在这里添加重连逻辑
+                    network_ready = 0;
+                    publish_error_count = 0;
+                }
             }
         }
         else
         {
-            // 网络未连接时，显示状态信息
-            static int status_counter = 0;
-            if (status_counter++ % 20 == 0) // 每20个循环（约5分钟）显示一次状态
+            // 网络未连接时，显示状态信息并尝试重新连接
+            static int reconnect_counter = 0;
+            if (reconnect_counter++ % 20 == 0) // 每20个循环（约5分钟）尝试一次重连
             {
-                USART2_SendString("\r\n⚠️  Network not ready - skipping data publish\r\n");
-                USART2_SendString("   Please check module status and restart if needed\r\n");
+                USART2_SendString("\r\n⚠️  Network not ready - attempting to reconnect...\r\n");
+
+                // 简单的网络检查
+                if(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000) == 0)
+                {
+                    USART2_SendString("✅ Network reconnected! Re-attempting MQTT connection...\r\n");
+                    network_ready = 1;
+                    reconnect_counter = 0;
+                }
+                else
+                {
+                    USART2_SendString("❌ Network still not ready, will retry later\r\n");
+                }
             }
         }
-        
+
         delay_ms(15000);
     }
 }
