@@ -169,7 +169,7 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
 int wait_for_rsp(const char* expected_rsp, uint32_t timeout_ms)
 {
     char debug_buffer[256];
-    
+
     // ---> 设置标志，表示我们开始等待响应 <---
     g_is_waiting_for_rsp = 1;
 
@@ -181,7 +181,7 @@ int wait_for_rsp(const char* expected_rsp, uint32_t timeout_ms)
         if (xUSART.USART1ReceivedNum > 0)
         {
             xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-            
+
             if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
             {
                 result = 0; // 成功
@@ -204,10 +204,118 @@ int wait_for_rsp(const char* expected_rsp, uint32_t timeout_ms)
         sprintf(debug_buffer, "!! Buffer content on timeout: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
         USART2_SendString(debug_buffer);
     }
-    
+
     // ---> 清除标志，将串口数据处理权还给主循环 <---
     g_is_waiting_for_rsp = 0;
-    
+
+    return result;
+}
+
+/**
+ * @brief 发送AT指令并等待多种可能的响应（用于MQTT认证）
+ * @param cmd 要发送的指令
+ * @param timeout_ms 超时时间
+ * @return 0: 成功(+QMTCONN: 0,0,0), 4: 认证失败(+QMTCONN: 0,0,4), -1: 其他错误
+ */
+int send_cmd_multiple(const char* cmd, uint32_t timeout_ms)
+{
+    char debug_buffer[256];
+
+    // ---> 设置标志，表示我们开始等待响应 <---
+    g_is_waiting_for_rsp = 1;
+
+    memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+    xUSART.USART1ReceivedNum = 0;
+
+    USART1_SendString((char*)cmd);
+
+    sprintf(debug_buffer, ">> Send to Module: %s", cmd);
+    USART2_SendString(debug_buffer);
+
+    uint32_t last_data_time = 0;
+    int result = -1; // 默认返回其他错误
+
+    uint32_t time_start = 0;
+    while(time_start < timeout_ms)
+    {
+        if (xUSART.USART1ReceivedNum > 0)
+        {
+            last_data_time = time_start;
+
+            // 🔧 【修复】创建临时缓冲区进行字符串匹配，避免干扰原始数据
+            char temp_buffer[U1_RX_BUF_SIZE + 1];
+            memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
+            temp_buffer[xUSART.USART1ReceivedNum] = '\0';
+
+            // 检查不同的响应类型
+            if (strstr(temp_buffer, "+QMTCONN: 0,0,0") != NULL)
+            {
+                result = 0; // 成功
+                break;
+            }
+            else if (strstr(temp_buffer, "+QMTCONN: 0,0,4") != NULL)
+            {
+                result = 4; // 认证失败
+                break;
+            }
+            else if (strstr(temp_buffer, "+QMTCONN: 0,0,1") != NULL)
+            {
+                result = 1; // 协议错误
+                break;
+            }
+            else if (strstr(temp_buffer, "+QMTCONN: 0,0,2") != NULL)
+            {
+                result = 2; // 客户端ID错误
+                break;
+            }
+            else if (strstr(temp_buffer, "+QMTCONN: 0,0,3") != NULL)
+            {
+                result = 3; // 服务器不可用
+                break;
+            }
+            else if (strstr(temp_buffer, "ERROR") != NULL)
+            {
+                result = -1; // 一般错误
+                break;
+            }
+        }
+
+        // 🔧 【新增】如果500ms内没有新数据，可以提前退出（响应已完成）
+        if(time_start - last_data_time > 500 && last_data_time > 0)
+        {
+            // 再等待一下确保数据完整
+            delay_ms(200);
+            break;
+        }
+
+        delay_ms(1);
+        time_start++;
+    }
+
+    if (result == -1) // 如果循环是因为超时而结束
+    {
+        sprintf(debug_buffer, "!! Timeout for cmd: %s\r\n", cmd);
+        USART2_SendString(debug_buffer);
+
+        // 🔧 【改进】更详细的超时调试信息
+        if (xUSART.USART1ReceivedNum > 0)
+        {
+            char temp_buffer[U1_RX_BUF_SIZE + 1];
+            memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
+            temp_buffer[xUSART.USART1ReceivedNum] = '\0';
+
+            sprintf(debug_buffer, "!! Buffer content on timeout (len=%d): %s\r\n", xUSART.USART1ReceivedNum, temp_buffer);
+            USART2_SendString(debug_buffer);
+        }
+        else
+        {
+            USART2_SendString("!! No data received during timeout period\r\n");
+        }
+    }
+
+    // ---> 清除标志，将串口数据处理权还给主循环 <---
+    g_is_waiting_for_rsp = 0;
+
     return result;
 }
 
@@ -539,17 +647,11 @@ int main(void)
                 // 3. 连接到MQTT服务器
                 USART2_SendString("3. Authenticating with MQTT server...\r\n");
                 sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", DEVICE_NAME, PRODUCT_ID, AUTH_INFO);
-                if(send_cmd(cmd_buffer, "+QMTCONN: 0,0,0", 10000) != 0)
-                {
-                    USART2_SendString("!! MQTT Authentication Failed!\r\n");
-                    USART2_SendString("!! Buffer content: ");
-                    USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
-                    USART2_SendString("\r\n");
 
-                    // 如果认证失败，关闭连接以便重试
-                    send_cmd("AT+QMTCLOSE=0\r\n", "OK", 3000);
-                }
-                else
+                // 🔧 【改进】等待多种可能的响应结果
+                int auth_result = send_cmd_multiple(cmd_buffer, 10000);
+
+                if(auth_result == 0) // +QMTCONN: 0,0,0 - 成功
                 {
                     USART2_SendString("✅ MQTT Authentication Successful!\r\n");
                     mqtt_connected = 1;
@@ -565,6 +667,30 @@ int main(void)
                     {
                         USART2_SendString("!! MQTT Topic Subscription Failed!\r\n");
                     }
+                }
+                else if(auth_result == 4) // +QMTCONN: 0,0,4 - 认证失败
+                {
+                    USART2_SendString("!! MQTT Authentication Failed (Error Code 4)!\r\n");
+                    USART2_SendString("!! Possible causes:\r\n");
+                    USART2_SendString("!! 1. Device info mismatch\r\n");
+                    USART2_SendString("!! 2. Authentication token expired\r\n");
+                    USART2_SendString("!! 3. Product ID or device name incorrect\r\n");
+                    USART2_SendString("!! Buffer content: ");
+                    USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
+                    USART2_SendString("\r\n");
+
+                    // 如果认证失败，关闭连接以便重试
+                    send_cmd("AT+QMTCLOSE=0\r\n", "OK", 3000);
+                }
+                else
+                {
+                    USART2_SendString("!! MQTT Authentication Failed with unknown error!\r\n");
+                    USART2_SendString("!! Buffer content: ");
+                    USART2_SendString((char*)xUSART.USART1ReceivedBuffer);
+                    USART2_SendString("\r\n");
+
+                    // 如果认证失败，关闭连接以便重试
+                    send_cmd("AT+QMTCLOSE=0\r\n", "OK", 3000);
                 }
             }
 
