@@ -39,8 +39,8 @@ volatile int mqtt_connected = 0;
 #define PRODUCT_ID   "nZ4v9G1iDK"
 #define AUTH_INFO    "version=2018-10-31&res=products%%2FnZ4v9G1iDK%%2Fdevices%%2Ftest&et=1798497693&method=md5&sign=ZmzDSu0enWpLqIS8rHDjXw%%D%%D"
 
-// 🔧 【修复】根据参考代码修正MQTT服务器地址和主题
-#define MQTT_SERVER  "mqtts.heclouds.com"  // 注意：使用mqtts（SSL/TLS）
+// 🔧 【修复】修正MQTT服务器地址和主题（使用普通MQTT，避免SSL问题）
+#define MQTT_SERVER  "mqtt.heclouds.com"   // 使用普通MQTT（非SSL）
 #define PUB_TOPIC    "$sys/"PRODUCT_ID"/"DEVICE_NAME"/dp/post/json"
 #define SUB_TOPIC    "$sys/"PRODUCT_ID"/"DEVICE_NAME"/dp/post/json/accepted" 
 
