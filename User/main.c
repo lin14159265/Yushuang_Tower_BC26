@@ -35,9 +35,10 @@ volatile uint8_t g_is_waiting_for_rsp = 0;
 #define PRODUCT_ID   "nZ4v9G1iDK"
 #define AUTH_INFO    "version=2018-10-31&res=products%%2FnZ4v9G1iDK%%2Fdevices%%2Ftest&et=1798497693&method=md5&sign=ZmzDSu0enWpLqIS8rHDjXw%%D%%D"
 
-// --- OneNET 主题信息 ---
+// 🔧 【修复】根据参考代码修正MQTT服务器地址和主题
+#define MQTT_SERVER  "mqtts.heclouds.com"  // 注意：使用mqtts（SSL/TLS）
 #define PUB_TOPIC    "$sys/"PRODUCT_ID"/"DEVICE_NAME"/dp/post/json"
-#define SUB_TOPIC    "$sys/"PRODUCT_ID"/"DEVICE_NAME"/cmd/request/+" 
+#define SUB_TOPIC    "$sys/"PRODUCT_ID"/"DEVICE_NAME"/dp/post/json/accepted" 
 
 /* ================== 用户代码: 物联网平台信息 END ==================== */
 
@@ -424,7 +425,8 @@ int main(void)
 
             // 2. 打开MQTT连接
             USART2_SendString("2. Opening MQTT connection...\r\n");
-            if(send_cmd("AT+QMTOPEN=0,\"mqtt.heclouds.com\",1883\r\n", "+QMTOPEN: 0,0", 10000) != 0)
+            sprintf(cmd_buffer, "AT+QMTOPEN=0,\"%s\",1883\r\n", MQTT_SERVER);
+            if(send_cmd(cmd_buffer, "+QMTOPEN: 0,0", 10000) != 0)
             {
                 USART2_SendString("!! MQTT Open Connection Failed!\r\n");
                 USART2_SendString("!! Buffer content: ");
