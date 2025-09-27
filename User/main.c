@@ -257,6 +257,23 @@ int main(void)
     while(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000)) 
     {
         USART2_SendString("Waiting for network attachment...\r\n");
+
+
+        // --- 新增调试代码 START ---
+        if (retry_count % 3 == 0) // 每循环3次，就查询一下信号质量
+        {
+            USART2_SendString("Checking signal quality...\r\n");
+            send_cmd("AT+CSQ\r\n", "OK", 2000); // 发送CSQ指令
+            
+            char debug_buffer[256];
+            sprintf(debug_buffer, "!! CSQ Response: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+            USART2_SendString(debug_buffer); // 打印CSQ的返回结果
+        }
+        retry_count++;
+        // --- 新增调试代码 END ---
+
+
+
         // 这里可以增加打印接收到的内容，方便调试
         char debug_buffer[256];
         sprintf(debug_buffer, "!! Current buffer: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
