@@ -225,6 +225,7 @@ int main(void)
     char cmd_buffer[512];
     char json_buffer[256];
     long message_id = 100;
+    int retry_count = 0;  // 🔧 【新增】添加retry_count变量声明，修复编译错误
 
     // 1. 系统核心初始化
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
@@ -251,6 +252,9 @@ int main(void)
     }
     
     send_cmd("ATE0\r\n", "OK", 1000);
+
+    // 获取IMEI号 (参考示例代码)  // 🔧 【新增】添加注释
+    send_cmd("AT+CIMI\r\n", "OK", 2000);  // 🔧 【新增】参考示例代码添加IMEI获取指令
 
     USART2_SendString("\r\n--- Attaching to Network ---\r\n");
     // 必须严格等待 "+CGATT: 1"
@@ -322,13 +326,14 @@ int main(void)
             xUSART.USART1ReceivedNum = 0;
         }
 
-        // --- 定时上报数据 (已修改为正确的两阶段流程) ---
+        // --- 定时上报数据 (参考示例代码，增加湿度数据，保持temp字段名) ---  // 🔧 【修改】更新注释
         float temperature = 25.8;
+        float humidity = 65.0;  // 🔧 【新增】添加湿度变量
         message_id++;
 
-        // 1. 准备JSON数据和AT指令
-        sprintf(json_buffer, "{\"id\":\"%ld\",\"dp\":{\"temp\":[{\"v\":%.1f}]}}",
-                message_id, temperature);
+        // 1. 准备JSON数据和AT指令 (保持temp字段名，增加湿度数据)  // 🔧 【修改】更新注释
+        sprintf(json_buffer, "{\"id\":\"%ld\",\"dp\":{\"temp\":[{\"v\":%.1f}],\"Humidity\":[{\"v\":%.1f}]}}",  // 🔧 【修改】保持temp字段，增加Humidity字段
+                message_id, temperature, humidity);  // 🔧 【修改】添加湿度参数
 
         sprintf(cmd_buffer, "AT+QMTPUB=0,0,0,0,\"%s\",%d\r\n", PUB_TOPIC, strlen(json_buffer));
         
