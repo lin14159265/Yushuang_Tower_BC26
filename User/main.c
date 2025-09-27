@@ -80,21 +80,24 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
     {
         if (xUSART.USART1ReceivedNum > 0)
         {
-            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-            
-            if (strstr((const char*)xUSART.USART1ReceivedBuffer, expected_rsp) != NULL)
+            // 🔧 【修复】创建临时缓冲区进行字符串匹配，避免干扰原始数据
+            char temp_buffer[U1_RX_BUF_SIZE + 1];
+            memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
+            temp_buffer[xUSART.USART1ReceivedNum] = '\0';
+
+            if (strstr(temp_buffer, expected_rsp) != NULL)
             {
                 result = 0; // 成功
                 break; // 跳出循环
             }
-            
-            if (strstr((const char*)xUSART.USART1ReceivedBuffer, "ERROR") != NULL)
+
+            if (strstr(temp_buffer, "ERROR") != NULL)
             {
                 result = 1; // 错误
                 break; // 跳出循环
             }
         }
-        
+
         delay_ms(1);
         time_start++;
     }
@@ -112,9 +115,28 @@ int send_cmd(const char* cmd, const char* expected_rsp, uint32_t timeout_ms)
     {
         sprintf(debug_buffer, "!! Timeout for cmd: %s\r\n", cmd);
         USART2_SendString(debug_buffer);
-        // ---> 新增打印 <---
-        sprintf(debug_buffer, "!! Buffer content on timeout: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-        USART2_SendString(debug_buffer);
+
+        // 🔧 【改进】更详细的超时调试信息
+        if (xUSART.USART1ReceivedNum > 0)
+        {
+            char temp_buffer[U1_RX_BUF_SIZE + 1];
+            memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
+            temp_buffer[xUSART.USART1ReceivedNum] = '\0';
+
+            sprintf(debug_buffer, "!! Buffer content on timeout (len=%d): %s\r\n", xUSART.USART1ReceivedNum, temp_buffer);
+            USART2_SendString(debug_buffer);
+
+            // 🔧 【调试】检查是否包含期望的响应
+            if (strstr(temp_buffer, expected_rsp) != NULL)
+            {
+                sprintf(debug_buffer, "!! ERROR: Expected response '%s' found in buffer but not detected!\r\n", expected_rsp);
+                USART2_SendString(debug_buffer);
+            }
+        }
+        else
+        {
+            USART2_SendString("!! No data received during timeout period\r\n");
+        }
     }
     
     return result;
@@ -338,9 +360,49 @@ int main(void)
             USART2_SendString("   ✅ GPRS attachment command sent\r\n");
         }
 
-        // 4. 检查GPRS附着状态 - 使用专门的send_cmd函数确保准确识别
+        // 4. 检查GPRS附着状态 - 使用专门的检测函数
         USART2_SendString("4. Checking GPRS attachment status...\r\n");
-        if(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000) == 0)
+
+        // 🔧 【新增】专门的CGATT检测函数，避免send_cmd的问题
+        int check_cgatt_status(void)
+        {
+            memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
+            xUSART.USART1ReceivedNum = 0;
+            USART1_SendString("AT+CGATT?\r\n");
+
+            // 等待响应
+            uint32_t wait_time = 0;
+            while(wait_time < 3000 && xUSART.USART1ReceivedNum == 0)
+            {
+                delay_ms(10);
+                wait_time += 10;
+            }
+
+            if(xUSART.USART1ReceivedNum > 0)
+            {
+                // 创建临时缓冲区进行安全检查
+                char temp_buffer[U1_RX_BUF_SIZE + 1];
+                memcpy(temp_buffer, xUSART.USART1ReceivedBuffer, xUSART.USART1ReceivedNum);
+                temp_buffer[xUSART.USART1ReceivedNum] = '\0';
+
+                // 检查是否包含 +CGATT: 1
+                if(strstr(temp_buffer, "+CGATT: 1") != NULL)
+                {
+                    return 1; // 成功
+                }
+                else
+                {
+                    // 输出实际收到的内容用于调试
+                    char debug_buffer[512];
+                    sprintf(debug_buffer, "   CGATT Response: %s\r\n", temp_buffer);
+                    USART2_SendString(debug_buffer);
+                    return 0;
+                }
+            }
+            return 0;
+        }
+
+        if(check_cgatt_status())
         {
             USART2_SendString("## ✅ GPRS Attached! Network Ready! ##\r\n");
             network_ready = 1;
@@ -349,10 +411,6 @@ int main(void)
         else
         {
             USART2_SendString("   ❌ GPRS not attached yet\r\n");
-            // 🔧 【调试】输出当前状态以便分析
-            char status_buffer[256];
-            sprintf(status_buffer, "   Debug: Last response was: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-            USART2_SendString(status_buffer);
         }
 
         // 5. 如果还没有准备好，等待更长时间
