@@ -22,6 +22,7 @@
 #include "system_f103.h"
 #include "stdio.h"
 #include "string.h"
+#include "stdlib.h"  // 🔧 【新增】支持rand()函数
 #include "bsp_led.h"
 #include "bsp_key.h"
 #include "bsp_usart.h"
@@ -604,6 +605,7 @@ int main(void)
     // 5. 主循环
     int publish_error_count = 0;
     int max_publish_errors = 3;
+    int mqtt_connection_check_counter = 0;
 
     while (1)
     {
@@ -620,7 +622,7 @@ int main(void)
             if(strstr((const char*)xUSART.USART1ReceivedBuffer, "+QMTSTAT:"))
             {
                 USART2_SendString("!! WARNING: MQTT connection status received, checking connection...\r\n");
-                // 可以在这里添加重连逻辑
+                mqtt_connected = 0; // 标记MQTT连接可能有问题
             }
 
             if(strstr((const char*)xUSART.USART1ReceivedBuffer, "+QMTRECV:"))
@@ -632,24 +634,57 @@ int main(void)
             xUSART.USART1ReceivedNum = 0;
         }
 
-        // 🔧 【改进】只有在网络和MQTT都连接成功的情况下才发送数据
-        if (network_ready)
+        // 🔧 【改进】定期检查MQTT连接状态
+        mqtt_connection_check_counter++;
+        if(mqtt_connection_check_counter >= 120) // 每30分钟检查一次MQTT连接
         {
-            // --- 定时上报数据 (参考示例代码，增加湿度数据，保持temp字段名) ---
-            float temperature = 25.8;
-            float humidity = 65.0;
+            mqtt_connection_check_counter = 0;
+            if(network_ready && mqtt_connected)
+            {
+                USART2_SendString("\r\n--- Periodic MQTT Connection Check ---\r\n");
+                // 发送心跳包检查连接
+                if(send_cmd("AT+QMTSTAT=0\r\n", "OK", 3000) != 0)
+                {
+                    USART2_SendString("!! MQTT connection may be lost, marking for reconnection\r\n");
+                    mqtt_connected = 0;
+                }
+            }
+        }
+
+        // 🔧 【改进】只有在网络和MQTT都连接成功的情况下才发送数据
+        if (network_ready && mqtt_connected)
+        {
+            // --- 定时上报传感器数据到OneNET ---
+            USART2_SendString("\r\n--- Preparing Sensor Data ---\r\n");
+
+            // 🔧 【改进】模拟多种传感器数据
+            float temperature = 25.8f + (rand() % 100 - 50) * 0.1f;  // 温度：20.8~30.8℃
+            float humidity = 65.0f + (rand() % 200 - 100) * 0.1f;      // 湿度：45.0~85.0%
+            int signal_strength = 85 + (rand() % 15);                   // 信号强度：85~99
+            float battery_voltage = 3.7f + (rand() % 50) * 0.01f;       // 电池电压：3.7~4.2V
+            int device_status = 1;                                       // 设备状态：1-正常
+
             message_id++;
 
-            // 1. 准备JSON数据和AT指令 (保持temp字段名，增加湿度数据)
-            sprintf(json_buffer, "{\"id\":\"%ld\",\"dp\":{\"temp\":[{\"v\":%.1f}],\"Humidity\":[{\"v\":%.1f}]}}",
-                    message_id, temperature, humidity);
+            // 1. 准备JSON数据 - 符合OneNET平台格式
+            sprintf(json_buffer,
+                "{\"id\":\"%ld\",\"version\":\"1.0\",\"sys\":{\"net\":{\"signal\":%d,\"attach\":1},\"dev\":{\"status\":%d,\"battery\":%.2f}},\"dp\":{\"temperature\":[{\"v\":%.1f}],\"humidity\":[{\"v\":%.1f}],\"light\":[{\"v\":%d}],\"location\":{\"lon\":116.3974,\"lat\":39.9093}}}",
+                message_id, signal_strength, device_status, battery_voltage, temperature, humidity, signal_strength);
 
             sprintf(cmd_buffer, "AT+QMTPUB=0,0,0,0,\"%s\",%d\r\n", PUB_TOPIC, strlen(json_buffer));
 
-            USART2_SendString("\r\n-> Publishing data step 1/2: Send command...\r\n");
+            // 显示要发送的数据
+            char data_info[256];
+            sprintf(data_info, "Data: T=%.1f℃ H=%.1f%% Signal=%d Battery=%.2fV\r\n",
+                   temperature, humidity, signal_strength, battery_voltage);
+            USART2_SendString(data_info);
+            sprintf(data_info, "JSON Length: %d bytes\r\n", strlen(json_buffer));
+            USART2_SendString(data_info);
+
+            USART2_SendString("-> Publishing data step 1/2: Send command...\r\n");
 
             // 2. 发送第一阶段指令，并等待 '>' 符号
-            if(send_cmd(cmd_buffer, ">", 2000) == 0)
+            if(send_cmd(cmd_buffer, ">", 3000) == 0)
             {
                 USART2_SendString("-> Publishing data step 2/2: Send payload...\r\n");
 
@@ -660,10 +695,16 @@ int main(void)
                 USART1_SendString(json_buffer);
 
                 // 4. 等待最终的 "OK" 响应
-                if(wait_for_rsp("OK", 5000) == 0)
+                if(wait_for_rsp("OK", 8000) == 0)
                 {
                     USART2_SendString("## ✅ Publish Success! ##\r\n");
                     publish_error_count = 0; // 重置错误计数
+
+                    // 🔧 【新增】显示成功统计信息
+                    static int success_count = 0;
+                    success_count++;
+                    sprintf(data_info, "Total successful publishes: %d\r\n", success_count);
+                    USART2_SendString(data_info);
                 }
                 else
                 {
@@ -673,17 +714,27 @@ int main(void)
                     // 🔧 【改进】错误计数和恢复机制
                     if(publish_error_count >= max_publish_errors)
                     {
-                        USART2_SendString("!! Too many publish errors, checking network connection...\r\n");
+                        USART2_SendString("!! Too many publish errors, checking connections...\r\n");
 
                         // 检查网络状态
                         if(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000) != 0)
                         {
-                            USART2_SendString("!! Network lost! Attempting to reconnect...\r\n");
-                            network_ready = 0; // 标记为未连接
+                            USART2_SendString("!! Network lost! Marking for reconnection...\r\n");
+                            network_ready = 0;
+                            mqtt_connected = 0;
                         }
                         else
                         {
-                            USART2_SendString("!! Network OK, but MQTT may have issues\r\n");
+                            // 检查MQTT连接状态
+                            if(send_cmd("AT+QMTSTAT=0\r\n", "OK", 3000) != 0)
+                            {
+                                USART2_SendString("!! MQTT connection lost! Marking for reconnection...\r\n");
+                                mqtt_connected = 0;
+                            }
+                            else
+                            {
+                                USART2_SendString("!! Network and MQTT OK, but publish failed\r\n");
+                            }
                         }
                         publish_error_count = 0;
                     }
@@ -697,30 +748,84 @@ int main(void)
                 if(publish_error_count >= max_publish_errors)
                 {
                     USART2_SendString("!! Too many command errors, resetting connection...\r\n");
-                    // 可以在这里添加重连逻辑
                     network_ready = 0;
+                    mqtt_connected = 0;
                     publish_error_count = 0;
                 }
             }
         }
         else
         {
-            // 网络未连接时，显示状态信息并尝试重新连接
+            // 🔧 【改进】网络或MQTT未连接时的恢复机制
             static int reconnect_counter = 0;
-            if (reconnect_counter++ % 20 == 0) // 每20个循环（约5分钟）尝试一次重连
+            if (reconnect_counter++ % 12 == 0) // 每12个循环（约3分钟）尝试一次重连
             {
-                USART2_SendString("\r\n⚠️  Network not ready - attempting to reconnect...\r\n");
+                USART2_SendString("\r\n--- Connection Recovery Attempt ---\r\n");
 
-                // 简单的网络检查
+                // 1. 首先检查网络状态
+                USART2_SendString("1. Checking network status...\r\n");
                 if(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000) == 0)
                 {
-                    USART2_SendString("✅ Network reconnected! Re-attempting MQTT connection...\r\n");
+                    USART2_SendString("✅ Network is ready!\r\n");
                     network_ready = 1;
-                    reconnect_counter = 0;
+
+                    // 2. 如果网络正常，尝试重新建立MQTT连接
+                    USART2_SendString("2. Attempting MQTT reconnection...\r\n");
+
+                    // 关闭现有连接
+                    send_cmd("AT+QMTCLOSE=0\r\n", "OK", 3000);
+                    delay_ms(1000);
+
+                    // 重新打开连接
+                    sprintf(cmd_buffer, "AT+QMTOPEN=0,\"%s\",1883\r\n", MQTT_SERVER);
+                    if(send_cmd(cmd_buffer, "+QMTOPEN: 0,0", 10000) == 0)
+                    {
+                        USART2_SendString("✅ MQTT reopened successfully!\r\n");
+
+                        // 重新认证
+                        sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", DEVICE_NAME, PRODUCT_ID, AUTH_INFO);
+                        if(send_cmd(cmd_buffer, "+QMTCONN: 0,0,0", 10000) == 0)
+                        {
+                            USART2_SendString("✅ MQTT reconnected successfully!\r\n");
+                            mqtt_connected = 1;
+                            reconnect_counter = 0;
+                        }
+                        else
+                        {
+                            USART2_SendString("❌ MQTT re-authentication failed\r\n");
+                        }
+                    }
+                    else
+                    {
+                        USART2_SendString("❌ MQTT reopen failed\r\n");
+                    }
                 }
                 else
                 {
-                    USART2_SendString("❌ Network still not ready, will retry later\r\n");
+                    USART2_SendString("❌ Network still not ready\r\n");
+                    network_ready = 0;
+
+                    // 尝试重新附着网络
+                    USART2_SendString("Attempting network re-attachment...\r\n");
+                    send_cmd("AT+CGATT=1\r\n", "OK", 10000);
+                }
+            }
+            else
+            {
+                // 显示当前状态
+                static int status_display_counter = 0;
+                if (status_display_counter++ % 4 == 0) // 每分钟显示一次状态
+                {
+                    USART2_SendString("\r\n⚠️  System Status: ");
+                    if (!network_ready)
+                    {
+                        USART2_SendString("Network Down ");
+                    }
+                    if (!mqtt_connected)
+                    {
+                        USART2_SendString("MQTT Down ");
+                    }
+                    USART2_SendString("- Next recovery attempt in 3 minutes\r\n");
                 }
             }
         }
