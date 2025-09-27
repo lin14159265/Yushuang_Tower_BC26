@@ -338,31 +338,21 @@ int main(void)
             USART2_SendString("   ✅ GPRS attachment command sent\r\n");
         }
 
-        // 4. 检查GPRS附着状态
+        // 4. 检查GPRS附着状态 - 使用专门的send_cmd函数确保准确识别
         USART2_SendString("4. Checking GPRS attachment status...\r\n");
-        memset(xUSART.USART1ReceivedBuffer, 0, U1_RX_BUF_SIZE);
-        xUSART.USART1ReceivedNum = 0;
-        USART1_SendString("AT+CGATT?\r\n");
-        delay_ms(2000);
-
-        if (xUSART.USART1ReceivedNum > 0)
+        if(send_cmd("AT+CGATT?\r\n", "+CGATT: 1", 5000) == 0)
         {
-            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-            char debug_buffer[512];
-            sprintf(debug_buffer, "   CGATT Response: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-            USART2_SendString(debug_buffer);
-
-            // 检查是否已附着
-            if (strstr((const char*)xUSART.USART1ReceivedBuffer, "+CGATT: 1") != NULL)
-            {
-                USART2_SendString("## ✅ GPRS Attached! Network Ready! ##\r\n");
-                network_ready = 1;
-                break;
-            }
-            else
-            {
-                USART2_SendString("   ❌ GPRS not attached yet\r\n");
-            }
+            USART2_SendString("## ✅ GPRS Attached! Network Ready! ##\r\n");
+            network_ready = 1;
+            break;
+        }
+        else
+        {
+            USART2_SendString("   ❌ GPRS not attached yet\r\n");
+            // 🔧 【调试】输出当前状态以便分析
+            char status_buffer[256];
+            sprintf(status_buffer, "   Debug: Last response was: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
+            USART2_SendString(status_buffer);
         }
 
         // 5. 如果还没有准备好，等待更长时间
