@@ -169,7 +169,7 @@ void System_TestRunTimes(void)
         return;
     }
     
-    printf("【运行时长-监察点-%d:%9u us】\r", CNT++, intervalTimes);
+    printf("【运行时长-监察点-%d:%9lu us】\r", CNT++, intervalTimes);
     System_GetTimeInterval ();
 } 
 

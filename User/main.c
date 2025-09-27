@@ -29,6 +29,9 @@
 
 volatile uint8_t g_is_waiting_for_rsp = 0;
 
+// 🔧 【新增】MQTT连接状态变量
+volatile int mqtt_connected = 0;
+
 /* ================== 用户代码: 物联网平台信息 START ================== */
 
 // --- 1. OneNET 连接信息 ---
@@ -260,7 +263,6 @@ int main(void)
     char cmd_buffer[512];
     char json_buffer[256];
     long message_id = 100;
-    int retry_count = 0;  // 🔧 【新增】添加retry_count变量声明，修复编译错误
 
     // 1. 系统核心初始化
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
