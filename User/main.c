@@ -39,8 +39,9 @@ volatile int mqtt_connected = 0;
 #define PRODUCT_ID   "nZ4v9G1iDK"
 #define AUTH_INFO    "version=2018-10-31&res=products%%2FnZ4v9G1iDK%%2Fdevices%%2Ftest&et=1798497693&method=md5&sign=ZmzDSu0enWpLqIS8rHDjXw%%D%%D"
 
-// 🔧 【修复】修正MQTT服务器地址和主题（使用普通MQTT，避免SSL问题）
-#define MQTT_SERVER  "mqtt.heclouds.com"   // 使用普通MQTT（非SSL）
+// 🔧 【修复】尝试使用OneNET MQTT服务器IP地址
+#define MQTT_SERVER  "183.230.40.39"       // OneNET MQTT服务器IP地址
+#define MQTT_PORT    1883                     // MQTT端口
 #define PUB_TOPIC    "$sys/"PRODUCT_ID"/"DEVICE_NAME"/dp/post/json"
 #define SUB_TOPIC    "$sys/"PRODUCT_ID"/"DEVICE_NAME"/dp/post/json/accepted" 
 
@@ -632,7 +633,7 @@ int main(void)
 
             // 2. 打开MQTT连接
             USART2_SendString("2. Opening MQTT connection...\r\n");
-            sprintf(cmd_buffer, "AT+QMTOPEN=0,\"%s\",1883\r\n", MQTT_SERVER);
+            sprintf(cmd_buffer, "AT+QMTOPEN=0,\"%s\",%d\r\n", MQTT_SERVER, MQTT_PORT);
             if(send_cmd(cmd_buffer, "+QMTOPEN: 0,0", 10000) != 0)
             {
                 USART2_SendString("!! MQTT Open Connection Failed!\r\n");
@@ -905,7 +906,7 @@ int main(void)
                     delay_ms(1000);
 
                     // 重新打开连接
-                    sprintf(cmd_buffer, "AT+QMTOPEN=0,\"%s\",1883\r\n", MQTT_SERVER);
+                    sprintf(cmd_buffer, "AT+QMTOPEN=0,\"%s\",%d\r\n", MQTT_SERVER, MQTT_PORT);
                     if(send_cmd(cmd_buffer, "+QMTOPEN: 0,0", 10000) == 0)
                     {
                         USART2_SendString("✅ MQTT reopened successfully!\r\n");
