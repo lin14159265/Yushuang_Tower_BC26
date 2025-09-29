@@ -27,11 +27,18 @@ static char g_cmd_buffer[512];
 
 
 /* ================== 延时函数 (来自您的代码) ================== */
-
+/*
 static void delay_ms(uint32_t ms)
 {
     ms = ms * 11993;
     for (uint32_t i = 0; i < ms; i++);
+}
+*/
+
+static void delay_ms(uint32_t ms)
+{
+    volatile uint32_t count = ms * 11993; // 将计数值存入一个 volatile 变量
+    while(count--); // 使用 while 循环递减
 }
 
 
