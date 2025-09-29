@@ -18,8 +18,17 @@
 // --- 1. 设备所属的产品ID ---
 #define MQTT_PRODUCT_ID  "d4J8Spo9uo"
 
+<<<<<<< Updated upstream
 // --- 2. 设备的名称 (也将用作 ClientID) ---
 #define MQTT_DEVICE_NAME "test"
+=======
+/*
+ * 注意: 您提供的指令中使用 mqtts 主机名但端口为 1883。
+ *      通常 MQTTS (SSL/TLS加密) 连接使用的标准端口是 8883。
+ *      此处完全遵照您的原始指令，未做任何修改。
+ */
+#define CMD_OPEN_MQTT_NETWORK       "AT+QMTOPEN=0,\"mqtts.heclouds.com\",8883\r\n"
+>>>>>>> Stashed changes
 
 // --- 3. 设备的连接鉴权签名 (密码) ---
 #define MQTT_PASSWORD_SIGNATURE "version=2018-10-31&res=products%2Fd4J8Spo9uo%2Fdevices%2Ftest&et=1790584042&method=md5&sign=EaWtOdD9uj7fXkgmkswN3A%3D%3D"
