@@ -4,9 +4,9 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
-#include "bsp_led.h"
-#include "bsp_key.h"
 #include "bsp_usart.h"
+
+static char g_cmd_buffer[512];
 
 /*
  ===============================================================================
@@ -18,17 +18,8 @@
 // --- 1. 设备所属的产品ID ---
 #define MQTT_PRODUCT_ID  "d4J8Spo9uo"
 
-<<<<<<< Updated upstream
 // --- 2. 设备的名称 (也将用作 ClientID) ---
 #define MQTT_DEVICE_NAME "test"
-=======
-/*
- * 注意: 您提供的指令中使用 mqtts 主机名但端口为 1883。
- *      通常 MQTTS (SSL/TLS加密) 连接使用的标准端口是 8883。
- *      此处完全遵照您的原始指令，未做任何修改。
- */
-#define CMD_OPEN_MQTT_NETWORK       "AT+QMTOPEN=0,\"mqtts.heclouds.com\",8883\r\n"
->>>>>>> Stashed changes
 
 // --- 3. 设备的连接鉴权签名 (密码) ---
 #define MQTT_PASSWORD_SIGNATURE "version=2018-10-31&res=products%2Fd4J8Spo9uo%2Fdevices%2Ftest&et=1790584042&method=md5&sign=EaWtOdD9uj7fXkgmkswN3A%3D%3D"
@@ -56,7 +47,7 @@ static void delay_ms(uint32_t ms)
  ********************************************************************************/
 void Initialize_And_Connect_MQTT(void)
 {
-    char cmd_buffer[512]; // 用于sprintf格式化指令
+    
 
     USART1_SendString("AT\r\n");
     delay_ms(500);
@@ -71,15 +62,15 @@ void Initialize_And_Connect_MQTT(void)
     USART1_SendString("AT+QMTCFG=\"version\",0,4\r\n");
     delay_ms(500);
 
-    sprintf(cmd_buffer, "AT+QMTOPEN=0,\"mqtts.heclouds.com\",1883\r\n");
-    USART1_SendString(cmd_buffer);
+    sprintf(g_cmd_buffer, "AT+QMTOPEN=0,\"mqtts.heclouds.com\",1883\r\n");
+    USART1_SendString(g_cmd_buffer);
     delay_ms(4000);
 
-    sprintf(cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n",
+    sprintf(g_cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n",
             MQTT_DEVICE_NAME,          // 参数1: ClientID
             MQTT_PRODUCT_ID,           // 参数2: Username
             MQTT_PASSWORD_SIGNATURE);  // 参数3: Password
-    USART1_SendString(cmd_buffer);
+    USART1_SendString(g_cmd_buffer);
     delay_ms(5000);
 }
 
@@ -88,11 +79,11 @@ void Initialize_And_Connect_MQTT(void)
  */
 void MQTT_Subscribe_Topic(void)
 {
-    char cmd_buffer[256];
+    
     // 在函数内部根据核心宏动态生成订阅主题
-    sprintf(cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/dp/post/json/accepted\",0\r\n", 
+    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/dp/post/json/accepted\",0\r\n", 
             MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
-    USART1_SendString(cmd_buffer);
+    USART1_SendString(g_cmd_buffer);
     delay_ms(500);
 }
 
@@ -101,17 +92,24 @@ void MQTT_Subscribe_Topic(void)
  * @param temperature 整数形式的温度值 (例如 253 代表 25.3 度)
  * @param humidity    整数形式的湿度值 (例如 605 代表 60.5 %)
  */
+// 【修正后】的 MQTT_Publish_Data 函数
 void MQTT_Publish_Data(int temperature, int humidity)
 {
-    char cmd_buffer[512];
-    // 在函数内部根据核心宏动态生成发布主题，并填充数据
-    sprintf(cmd_buffer, 
-            "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/dp/post/json\",\"{\\\"id\\\":%ld,\\\"dp\\\":{\\\"Humidity\\\":[{\\\"v\\\":%d.%d}],\\\"Temperature\\\":[{\\\"v\\\":%d.%d}]}}\"\r\n",
-            MQTT_PRODUCT_ID, MQTT_DEVICE_NAME,
-            (long)rand(), // 消息ID使用随机数
+     char json_payload[256]; 
+    sprintf(json_payload, 
+            "{\\\"id\\\":%d,\\\"dp\\\":{\\\"Humidity\\\":[{\\\"v\\\":%d.%d}],\\\"Temperature\\\":[{\\\"v\\\":%d.%d}]}}",
+            (int)rand(), // 使用 %d 和 (int) 强制类型转换，嵌入式系统兼容性更好
             humidity / 10, humidity % 10,
             temperature / 10, temperature % 10);
-    USART1_SendString(cmd_buffer);
+
+    // 第2步：将JSON负载作为 %s 参数，构建最终的AT指令。
+    // 这样做，sprintf会自动处理好所有必要的引号，代码清晰且不会出错。
+    sprintf(g_cmd_buffer, "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/dp/post/json\",\"%s\"\r\n",
+            MQTT_PRODUCT_ID, 
+            MQTT_DEVICE_NAME,
+            json_payload); // 将构建好的json字符串作为参数传入
+
+    USART1_SendString(g_cmd_buffer);
     delay_ms(1000);
 }
 
@@ -120,11 +118,11 @@ void MQTT_Publish_Data(int temperature, int humidity)
  */
 void MQTT_Unsubscribe_Topic(void)
 {
-    char cmd_buffer[256];
+    
     // 同样在函数内部动态生成主题
-    sprintf(cmd_buffer, "AT+QMTUNS=0,1,\"$sys/%s/%s/dp/post/json/accepted\"\r\n",
+    sprintf(g_cmd_buffer, "AT+QMTUNS=0,1,\"$sys/%s/%s/dp/post/json/accepted\"\r\n",
             MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
-    USART1_SendString(cmd_buffer);
+    USART1_SendString(g_cmd_buffer);
     delay_ms(500);
 }
 
@@ -141,42 +139,41 @@ void MQTT_Disconnect(void)
 // 主函数 (保持不变)
 int main(void)
 {
+    int fake_temp, fake_humi;
+    
     // 1. 系统核心初始化
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
     System_SwdMode();
 
     // 2. 外设初始化
     USART1_Init(115200); // 与通信模块交互
-    USART2_Init(115200); // 调试信息输出
-    Led_Init();
+    
 
     // 3. 执行模块初始化和连接云平台
     Initialize_And_Connect_MQTT();
+
+    delay_ms(8000);
     
     
     // 4. 连接成功后，订阅主题
     //MQTT_Subscribe_Topic();
 
-    int fake_temp, fake_humi;
 
     while (1)
     {
-        /*
+        
         // 生成模拟的温湿度数据用于测试
         fake_temp = 200 + (rand() % 100); 
         fake_humi = 500 + (rand() % 300);
 
-        char debug_msg[100];
-        sprintf(debug_msg, "Publishing Data -> Temp: %d.%d C, Humi: %d.%d %%\r\n", 
-                fake_temp/10, fake_temp%10, 
-                fake_humi/10, fake_humi%10);
-        USART2_SendString(debug_msg);
+        
 
         // 调用函数，发布数据
         MQTT_Publish_Data(fake_temp, fake_humi);
         
         // 每10秒上报一次
         delay_ms(10000); 
-        */
+        
+        
     }
 }
