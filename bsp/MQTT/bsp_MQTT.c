@@ -8,17 +8,21 @@
 #include "bsp_usart.h"
 #include "stdbool.h" // 引入布尔类型头文件
 
-// 将 g_cmd_buffer 的大小从 1024 增加到 2048
-static char g_cmd_buffer[4096];
-static char g_json_payload[4096]; 
-static unsigned int g_message_id = 0;
+// 缓冲区加倍，因为新的JSON报文很长
+static char g_cmd_buffer[1024];      
+static char g_json_payload[1024];
+static unsigned int g_message_id = 0; 
+
+
 
 // --- 1. 设备所属的产品ID ---
 #define MQTT_PRODUCT_ID  "30w1g93kaf"
+
 // --- 2. 设备的名称 (也将用作 ClientID) ---
 #define MQTT_DEVICE_NAME "Yushuang_Tower_007"
+
 // --- 3. 设备的连接鉴权签名 (密码) ---
-#define MQTT_PASSWORD_SIGNATURE "version=2018-10-31&res=products%2F30w1g93kaf%2Fdevices%2FYushuang_Tower_007&et=1790671501&method=md5&sign=F48CON9W%2FTkD6dPXA%2FKxgQ%3D%3D"
+#define MQTT_PASSWORD_SIGNATURE "version=2018-10-31&res=products%2F30w1g93kaf%2Fdevices%2FYushuang_Tower_007&et=1790736737&method=md5&sign=QnmELX6Y%2BaGxhsPnvzreMQ%3D%3D"
 
 
 
@@ -36,15 +40,12 @@ static unsigned int g_message_id = 0;
                             静态辅助函数
  ===============================================================================
 */
-/**
- * @brief  [已更新] 毫秒级延时函数 (使用SysTick硬件定时器)
- * @param  ms: 要延时的毫秒数
- */
 static void delay_ms(uint32_t ms)
 {
-    // 直接调用您工程中提供的、基于SysTick的精确延时函数
-    System_DelayMS(ms);
+    volatile uint32_t count = ms * 11993;
+    while(count--);
 }
+
 
 /*
  ===============================================================================
@@ -52,94 +53,27 @@ static void delay_ms(uint32_t ms)
  ===============================================================================
 */
 
-
 /**
- * @brief  [升级版] 发送AT指令并等待响应 (使用SysTick实现精确超时)
- * @param  cmd: 要发送的AT指令字符串。
- * @param  expected_response: 期望在模块的回复中找到的关键字字符串。
- * @param  timeout_ms: 等待响应的超时时间，单位毫秒。
- * @return bool: true 代表成功，false 代表失败。
+ * @brief  初始化AT指令并连接到MQTT服务器
  */
-bool MQTT_Send_AT_Command(const char* cmd, const char* expected_response, uint32_t timeout_ms)
+void Initialize_And_Connect_MQTT(void)
 {
-    // 步骤1：清空串口接收缓冲区
-    memset(xUSART.USART1ReceivedBuffer, 0, sizeof(xUSART.USART1ReceivedBuffer));
-    xUSART.USART1ReceivedNum = 0;
-
-    // 步骤2：通过串口发送AT指令
-    printf("SEND: %s", cmd);
-    USART1_SendString((char*)cmd);
-
-    // 步骤3：[核心升级] 使用SysTick获取当前时间作为超时判断的起点
-    u64 start_time = System_GetTimeMs();
-
-    // 步骤4：在超时时间内循环等待
-    while ((System_GetTimeMs() - start_time) < timeout_ms)
-    {
-        // 检查串口是否收到了数据
-        if (xUSART.USART1ReceivedNum > 0)
-        {
-            xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-
-            // 检查收到的数据中是否包含期望的响应
-            if (strstr((char*)xUSART.USART1ReceivedBuffer, expected_response) != NULL)
-            {
-                printf("SUCCESS: Found response '%s'\r\n\r\n", expected_response);
-                return true; // 成功！
-            }
-        }
-        
-        // 短暂延时，避免CPU空转，让出CPU给中断等其他任务
-        // 这里的 delay_ms() 已经是我们更新后的精确延时了
-        delay_ms(10); 
-    }
-
-    // 如果循环结束，说明已经超过了指定的 timeout_ms
-    printf("FAIL: Timeout. Did not receive '%s' in %lu ms.\r\n\r\n", expected_response, timeout_ms);
-    printf("Last received data: %s\r\n", (char*)xUSART.USART1ReceivedBuffer);
-    return false; // 失败！
-}
-
-
-
-/**
- * @brief [改造版] 使用同步发送-确认机制，可靠地初始化模块并连接到MQTT服务器
- * @return bool: true 代表所有步骤都成功，false 代表有任何一步失败。
- */
-bool Robust_Initialize_And_Connect_MQTT(void)
-{
-    // 1. 检查AT指令是否响应
-    if (!MQTT_Send_AT_Command("AT\r\n", "OK", 500)) 
-        return false;
-    
-    // 2. 获取SIM卡信息 (IMSI)
-    if (!MQTT_Send_AT_Command("AT+CIMI\r\n", "OK", 1000)) 
-        return false;
-
-    // 3. 设置GPRS附着
-    if (!MQTT_Send_AT_Command("AT+CGATT=1\r\n", "OK", 1000)) 
-        return false;
-
-    // 4. 查询GPRS附着状态，期望回复是 "+CGATT: 1"
-    if (!MQTT_Send_AT_Command("AT+CGATT?\r\n", "+CGATT: 1", 3000)) 
-        return false;
-
-    // 5. 配置MQTT协议版本为 3.1.1
-    if (!MQTT_Send_AT_Command("AT+QMTCFG=\"version\",0,4\r\n", "OK", 1000)) 
-        return false;
-
-    // 6. 打开MQTT网络 (连接到OneNET服务器)
-    //    注意：网络操作需要更长的超时时间
+    USART1_SendString("AT\r\n");
+    delay_ms(50);
+    USART1_SendString("AT+CIMI\r\n");
+    delay_ms(100);
+    USART1_SendString("AT+CGATT=1\r\n");
+    delay_ms(100);
+    USART1_SendString("AT+CGATT?\r\n");
+    delay_ms(200);
+    USART1_SendString("AT+QMTCFG=\"version\",0,4\r\n");
+    delay_ms(500);
     sprintf(g_cmd_buffer, "AT+QMTOPEN=0,\"mqtts.heclouds.com\",1883\r\n");
-    if (!MQTT_Send_AT_Command(g_cmd_buffer, "+QMTOPEN: 0,0", 5000)) 
-        return false; 
-
-    // 7. 使用三元组连接MQTT Broker
-    //    注意：这是最关键的网络认证步骤，也需要较长超时
+    USART1_SendString(g_cmd_buffer);
+    delay_ms(400);
     sprintf(g_cmd_buffer, "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n", MQTT_DEVICE_NAME, MQTT_PRODUCT_ID, MQTT_PASSWORD_SIGNATURE);
-    if (!MQTT_Send_AT_Command(g_cmd_buffer, "+QMTCONN: 0,0,0", 5000)) 
-        return false; 
-    return true; // 所有步骤都成功了！
+    USART1_SendString(g_cmd_buffer);
+    delay_ms(500);
 }
 
 /**
@@ -158,10 +92,12 @@ void MQTT_Publish_All_Properties(
     const char* str_sprinklers = sprinklers_available ? "true" : "false";
     const char* str_fans = fans_available ? "true" : "false";
     const char* str_heaters = heaters_available ? "true" : "false";
-    int written_chars = 0;   
+
+    char json_payload[1024]; 
     g_message_id++;
+
     // 构建与日志完全一致的 'params' JSON 负载
-    sprintf(g_json_payload, 
+    sprintf(json_payload, 
         "{\\\"id\\\":\\\"%u\\\",\\\"version\\\":\\\"1.0\\\",\\\"params\\\":{"
         "\\\"ambient_temp\\\":{\\\"value\\\":%d},"
         "\\\"humidity\\\":{\\\"value\\\":%d},"
@@ -183,12 +119,13 @@ void MQTT_Publish_All_Properties(
         crop_stage, intervention_status,
         str_sprinklers, str_fans, str_heaters
     );
+
     // Topic 必须使用 'thing/property/post'
     sprintf(g_cmd_buffer, "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/thing/property/post\",\"%s\"\r\n",
             MQTT_PRODUCT_ID, 
             MQTT_DEVICE_NAME,
-            g_json_payload);
-            LED3_ON;
+            json_payload);
+
     USART1_SendString(g_cmd_buffer);
     delay_ms(2000); // 报文很长，建议增加延时确保发送完整
 }
@@ -350,9 +287,17 @@ void MQTT_Subscribe_Service_Invoke_Topic(void)
  */
 void MQTT_Subscribe_All_Topics(void)
 {
+    printf("Subscribing to all topics...\r\n");
+
     MQTT_Subscribe_Command_Topic();
-    MQTT_Subscribe_Property_Set_Topic();  
-    MQTT_Subscribe_Service_Invoke_Topic();    
+    printf("-> Subscribed to Command Topic.\r\n");
+
+    MQTT_Subscribe_Property_Set_Topic();
+    printf("-> Subscribed to Property Set Topic.\r\n");
+    
+    MQTT_Subscribe_Service_Invoke_Topic();
+    printf("-> Subscribed to Service Invoke Topic.\r\n");
+    
     // 如果未来有更多需要订阅的主题，继续在这里添加...
 }
 
@@ -403,84 +348,44 @@ void MQTT_Publish_All_Properties_Random(void)
 
 
 
-
-/**
- * @brief [新增] 统一处理所有从云平台接收到的MQTT消息
- * @param buffer: 指向串口接收缓冲区的指针
- */
-void Process_MQTT_Message(const char* buffer)
-{
-    // 首先，打印出所有接收到的内容，方便调试
-    printf("RECV: %s\r\n", buffer);
-
-    // --- 1. 判断是否为“属性设置” (`/thing/property/set`) ---
-    if (strstr(buffer, "/thing/property/set") != NULL)
-    {
-        printf("DEBUG: Received a 'Property Set' command.\r\n");
-        // 在这里添加解析JSON并更新本地变量的代码
-        // 例如，解析 crop_stage 的值
-    }
-    // --- 2. 判断是否为“服务调用” (`/thing/service/invoke`) ---
-    else if (strstr(buffer, "/thing/service/invoke") != NULL)
-    {
-        printf("DEBUG: Received a 'Service Invoke' command.\r\n");
-        // 在这里添加解析JSON并执行相应服务的代码
-        // 例如，解析 set_intervention 的方法并控制继电器
-    }
-    // --- 3. 判断是否为“旧版命令” (`/cmd/request/`) ---
-    else if (strstr(buffer, "/cmd/request/") != NULL)
-    {
-        printf("DEBUG: Received a legacy 'Command Request'.\r\n");
-        // 在这里添加解析并执行旧版命令的代码
-    }
-    // --- 4. 判断是否为“获取期望值”的回复 (`/desired/get/reply`) ---
-    // (如果您调用了 MQTT_Get_Desired_Crop_Stage() 函数)
-    else if (strstr(buffer, "/desired/get/reply") != NULL)
-    {
-        printf("DEBUG: Received a 'Desired Get Reply'.\r\n");
-        // 在这里添加解析期望值的代码
-    }
-}
-
-
 /**
  * @brief 主函数
  */
 int main(void)
 {
-   
 
     // 1. 系统核心初始化
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
     System_SwdMode();
 
     // 2. 外设初始化
-    System_SysTickInit();
     USART1_Init(115200);
-    USART2_Init(115200);
     Led_Init();
-    if (Robust_Initialize_And_Connect_MQTT())
-    {
-        // --- 初始化成功 ---
-        LED1_ON; // 用常亮灯表示连接成功
-        // 连接成功后，再订阅所有需要的主题
-        MQTT_Subscribe_All_Topics();   
-        // 进入主循环，开始上报数据和接收命令
-        while (1)
-        {
-            // --- 1. 检查并处理从云平台下发的数据 (核心的“听”逻辑) ---
-            if (xUSART.USART1ReceivedNum > 0)
-            {
-                // 确保接收到的数据是一个有效的C字符串
-                xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
 
-                // 调用一个总的函数来处理所有收到的消息
-                Process_MQTT_Message((char*)xUSART.USART1ReceivedBuffer);
-                
-                // 【重要】处理完毕后，清空接收计数器，为下次接收做准备
-                xUSART.USART1ReceivedNum = 0;
-            }
-            MQTT_Publish_All_Properties_Random();
-        }
+    
+
+    // 3. 执行模块初始化和连接云平台
+    Initialize_And_Connect_MQTT();
+    
+
+    MQTT_Subscribe_All_Topics();
+
+    
+
+
+    
+    
+
+    
+    
+
+    while (1)
+    {
+        // 每隔一段时间 (例如 5 秒) 上报一次随机数据
+        MQTT_Publish_All_Properties_Random();
+        
+        // 这里用 delay_ms 做演示。在实际项目中，请使用定时器或操作系统的延时
+        delay_ms(5000);
+
     }
 }

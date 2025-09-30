@@ -27,6 +27,8 @@
 #include "bsp_lcd_2.8_ili93xx.h"
 #include "bsp_xpt2046.h"
 #include "bsp_can.h"
+#include "bsp_MQTT.h"
+
 
 
 

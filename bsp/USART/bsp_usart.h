@@ -65,7 +65,7 @@
 // 用哪个串口与上位机通信，可自行
 #define USARTx_DEBUG            USART2              // 用于重定向printf, 使printf通过USARTx发送数据
 // 数据接收缓冲区大小，可自行修改
-#define U1_RX_BUF_SIZE            1024              // 配置每个USARTx接收缓冲区的大小(字节数)，包括中断里的缓存大小，和xUSART结构体里的缓存区大小
+#define U1_RX_BUF_SIZE            2048              // 配置每个USARTx接收缓冲区的大小(字节数)，包括中断里的缓存大小，和xUSART结构体里的缓存区大小
 #define U2_RX_BUF_SIZE            1024              // --- 当每帧接收到的数据字节数，小于此值时，数据正常;剩余空间数据为: 0
 #define U3_RX_BUF_SIZE            1024              // --- 当每帧接收到的数据字节数，超过此值时，超出部分，将在中断中直接弃舍，直到接收结束(发生空闲中断); 
 #define U4_RX_BUF_SIZE            1024              // --- 有效区域：仅在各个USARTx的中断服务函数中工作;

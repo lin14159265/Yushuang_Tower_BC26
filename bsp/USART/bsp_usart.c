@@ -37,6 +37,7 @@
  **
 ************************************************************************************************************************************/
 #include "bsp_usart.h"
+#include "stm32f10x.h"
 
 
 
@@ -116,8 +117,6 @@ void USART1_Init(uint32_t baudrate)
 static uint8_t U1TxBuffer[256] ;    // 用于中断发送：环形缓冲区，256个字节
 static uint8_t U1TxCounter = 0 ;    // 用于中断发送：标记已发送的字节数(环形)
 static uint8_t U1TxCount   = 0 ;    // 用于中断发送：标记将要发送的字节数(环形)
-
-// 文件: bsp_usart.c
 
 void USART1_IRQHandler(void)
 {
