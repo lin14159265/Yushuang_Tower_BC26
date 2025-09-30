@@ -37,4 +37,14 @@ void MQTT_Publish_Data(int temperature, int humidity);
 void MQTT_Subscribe_Command_Topic(void);
 void MQTT_Publish_Command_Response(const char* cmdId, const char* response_msg);
 
+void MQTT_Publish_All_Properties(
+    int ambient_temp, int humidity, int pressure, int wind_speed,
+    int temp1, int temp2, int temp3, int temp4,
+    int crop_stage, int intervention_status,
+    bool sprinklers_available, bool fans_available, bool heaters_available
+);
+
+
+void MQTT_Post_Frost_Alert_Event(float current_temp);
+
 #endif /* __MQTT_HANDLER_H */
