@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "bsp_mqtt.h": "c",
+        "bsp_usart.h": "c"
+    }
+}
