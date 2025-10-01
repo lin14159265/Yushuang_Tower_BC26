@@ -263,60 +263,80 @@ void MQTT_Get_Desired_Crop_Stage(void)
 
 
 /**
- * @brief 订阅云端下发命令的主题
- * @note  这个函数让设备告诉OneNET平台：“我准备好接收命令了”。
+ * @brief [健壮版] 订阅云端下发命令的主题，并等待确认
+ * @return bool: true 代表订阅成功, false 代表失败
  */
-void MQTT_Subscribe_Command_Topic(void)
+bool MQTT_Subscribe_Command_Topic(void)
 {
-    // 准备构建AT指令
-    // AT+QMTSUB=<client_idx>,<msg_id>,"<topic>",<qos>
-    // client_idx: 客户端索引，我们一直用0
-    // msg_id: 消息ID，对于订阅可以随便写，比如1
-    // topic: 订阅的主题，这是核心
-    // qos: 服务质量等级，通常用1，表示至少送达一次
-
     // 目标Topic: $sys/{product_id}/{device_name}/cmd/request/+
-    // 最后的 '+' 是一个通配符，表示我们愿意接收任何cmdId的命令。
     sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/cmd/request/+\",1\r\n", 
             MQTT_PRODUCT_ID, 
             MQTT_DEVICE_NAME);
             
-    // 通过串口将AT指令发送给模块
-    USART1_SendString(g_cmd_buffer);
-    delay_ms(500); // 延时等待模块的响应
-}
-
-
-// 订阅“属性设置”的主题
-void MQTT_Subscribe_Property_Set_Topic(void)
-{
-    // Topic: $sys/{product_id}/{device_name}/thing/property/set
-    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/thing/property/set\",1\r\n", 
-            MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
-    USART1_SendString(g_cmd_buffer);
-    delay_ms(500);
-}
-
-// 订阅“服务调用”的主题
-void MQTT_Subscribe_Service_Invoke_Topic(void)
-{
-    // Topic: $sys/{product_id}/{device_name}/thing/service/invoke
-    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/thing/service/invoke\",1\r\n", 
-            MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
-    USART1_SendString(g_cmd_buffer);
-    delay_ms(500);
+    // 发送指令并等待模块返回 "+QMTSUB: 0,1,0" 表示成功
+    return MQTT_Send_AT_Command(g_cmd_buffer, "+QMTSUB: 0,1,0", 3000);
 }
 
 
 /**
- * @brief [推荐] 一次性订阅所有需要接收消息的主题
+ * @brief [健壮版] 订阅“属性设置”的主题，并等待确认
+ * @return bool: true 代表订阅成功, false 代表失败
  */
-void MQTT_Subscribe_All_Topics(void)
+bool MQTT_Subscribe_Property_Set_Topic(void)
 {
-    MQTT_Subscribe_Command_Topic();
-    MQTT_Subscribe_Property_Set_Topic();  
-    MQTT_Subscribe_Service_Invoke_Topic();    
+    // Topic: $sys/{product_id}/{device_name}/thing/property/set
+    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/thing/property/set\",1\r\n", 
+            MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
+
+    // 发送指令并等待模块返回 "+QMTSUB: 0,1,0" 表示成功
+    return MQTT_Send_AT_Command(g_cmd_buffer, "+QMTSUB: 0,1,0", 3000);
+}
+
+/**
+ * @brief [健壮版] 订阅“服务调用”的主题，并等待确认
+ * @return bool: true 代表订阅成功, false 代表失败
+ */
+bool MQTT_Subscribe_Service_Invoke_Topic(void)
+{
+    // Topic: $sys/{product_id}/{device_name}/thing/service/invoke
+    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/thing/service/invoke\",1\r\n", 
+            MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
+
+    // 发送指令并等待模块返回 "+QMTSUB: 0,1,0" 表示成功
+    return MQTT_Send_AT_Command(g_cmd_buffer, "+QMTSUB: 0,1,0", 3000);
+}
+
+
+/**
+ * @brief [健壮版] 一次性订阅所有需要接收消息的主题，并检查每一步的结果
+ * @return bool: true 代表所有主题都订阅成功, false 代表有任何一个失败
+ */
+bool MQTT_Subscribe_All_Topics(void)
+{
+    printf("INFO: Subscribing to all topics...\r\n");
+
+    if (!MQTT_Subscribe_Command_Topic()) {
+        printf("ERROR: Failed to subscribe to Command Topic.\r\n");
+        return false;
+    }
+    
+    if (!MQTT_Subscribe_Property_Set_Topic()) {
+        printf("ERROR: Failed to subscribe to Property Set Topic.\r\n");
+        return false;
+    }
+    
+    if (!MQTT_Subscribe_Service_Invoke_Topic()) {
+        printf("ERROR: Failed to subscribe to Service Invoke Topic.\r\n");
+        return false;
+    }
+    
     // 如果未来有更多需要订阅的主题，继续在这里添加...
+    // if (!MQTT_Subscribe_Another_Topic()) {
+    //     return false;
+    // }
+
+    printf("INFO: All topics subscribed successfully.\r\n\r\n");
+    return true; // 所有订阅都成功了
 }
 
 /**
@@ -641,10 +661,11 @@ void MQTT_Publish_Temperatures_Random(void)
 /**
  * @brief 主函数
  */
+/**
+ * @brief 主函数
+ */
 int main(void)
 {
-   
-
     // 1. 系统核心初始化
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
     System_SwdMode();
@@ -652,32 +673,61 @@ int main(void)
     // 2. 外设初始化
     System_SysTickInit();
     USART1_Init(115200);
-    USART2_Init(115200);
+    USART2_Init(115200); // 假设 printf 从 USART2 输出
     Led_Init();
+
+    printf("System Initialized. Trying to connect to MQTT server...\r\n");
+
     if (Robust_Initialize_And_Connect_MQTT())
     {
-        
+        printf("SUCCESS: MQTT Connected.\r\n");
         LED1_ON; // 用常亮灯表示连接成功
-        // 连接成功后，再订阅所有需要的主题
-        MQTT_Subscribe_All_Topics();   
-        // 进入主循环，开始上报数据和接收命令
-        // --- [新增] 开机后，主动向云平台查询一次期望的作物时期 ---
-        MQTT_Get_Desired_Crop_Stage();
-        while (1)
+
+        // [修改点] 连接成功后，订阅所有主题，并检查结果
+        if (MQTT_Subscribe_All_Topics())
         {
-            // --- 1. 检查并处理从云平台下发的数据 (核心的“听”逻辑) ---
-            if (xUSART.USART1ReceivedNum > 0)
-            {
-                // 确保接收到的数据是一个有效的C字符串
-                xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-                // 调用一个总的函数来处理所有收到的消息
-                Process_MQTT_Message_Robust((char*)xUSART.USART1ReceivedBuffer);                
-                // 【重要】处理完毕后，清空接收计数器，为下次接收做准备
-                xUSART.USART1ReceivedNum = 0;
-            }
+            // 订阅成功，可以进入主循环
+            printf("Entering main loop...\r\n");
             
+            // --- [新增] 开机后，主动向云平台查询一次期望的作物时期 ---
+            MQTT_Get_Desired_Crop_Stage();
+            
+            while (1)
+            {
+                // --- 1. 检查并处理从云平台下发的数据 ---
+                if (xUSART.USART1ReceivedNum > 0)
+                {
+                    xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
+                    Process_MQTT_Message_Robust((char*)xUSART.USART1ReceivedBuffer);                
+                    xUSART.USART1ReceivedNum = 0;
+                }
+                
+                // --- 2. 周期性上报数据 (示例) ---
+                MQTT_Publish_Temperatures_Random();
+                delay_ms(10000); // 例如每10秒上报一次
+            }
+        }
+        else
+        {
+            // [新增] 订阅失败处理
+            printf("FATAL ERROR: Failed to subscribe to topics. Halting.\r\n");
+            // 在这里可以闪烁一个错误LED灯，然后进入死循环
+            while(1)
+            {
+                LED1_TOGGLE; // 假设 LED1 用于错误指示
+                delay_ms(200);
+            }
+        }
+    }
+    else
+    {
+        // 连接失败处理
+        printf("FATAL ERROR: Failed to connect to MQTT server. Halting.\r\n");
+        while(1)
+        {
+            LED2_TOGGLE; // 假设 LED2 用于连接失败指示
+            delay_ms(500);
         }
     }
 }
-
 
