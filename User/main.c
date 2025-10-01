@@ -740,39 +740,47 @@ void MQTT_Publish_Temperatures_Random(void)
 
 
 /**
- * @brief 主函数
+ * @brief 主函数 (采用非阻塞式架构, 并调用 system_f103.c 中的函数)
  */
 int main(void)
 {
-    // 1. 系统核心初始化
+    // 1. 系统核心初始化 (这部分不变)
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
     System_SwdMode();
 
-    // 2. 外设初始化
-    System_SysTickInit();
+    // 2. 外设初始化 (调用您库中的 SysTick 初始化)
+    System_SysTickInit(); 
     USART1_Init(115200);
-    USART2_Init(115200); // 假设 printf 从 USART2 输出
+    USART2_Init(115200);
     Led_Init();
 
     printf("System Initialized. Trying to connect to MQTT server...\r\n");
 
+    // 3. 连接与订阅 (这部分不变)
     if (Robust_Initialize_And_Connect_MQTT())
     {
         printf("SUCCESS: MQTT Connected.\r\n");
-        LED1_ON; // 用常亮灯表示连接成功
+        LED1_ON;
 
-        // [修改点] 连接成功后，订阅所有主题，并检查结果
         if (MQTT_Subscribe_All_Topics())
         {
-            // 订阅成功，可以进入主循环
             printf("Entering main loop...\r\n");
             
-            // --- [新增] 开机后，主动向云平台查询一次期望的作物时期 ---
             MQTT_Get_Desired_Crop_Stage();
             
+            // --- [核心修改] ---
+            // 定义一个变量，用于记录上一次上报数据的时间
+            // 注意：变量类型为 u64，以匹配 System_GetTimeMs() 的返回值类型
+            u64 last_report_time = 0;
+            
+            // 定义上报周期，例如15秒 (15000毫秒)
+            const uint32_t report_interval_ms = 15000;
+
+            // --- [核心修改] ---
+            // 进入永不阻塞的主循环
             while (1)
             {
-                // --- 1. 检查并处理从云平台下发的数据 ---
+                // --- 任务1: 随时检查并处理下行消息 (这个任务现在可以被非常频繁地执行) ---
                 if (xUSART.USART1ReceivedNum > 0)
                 {
                     xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
@@ -780,31 +788,46 @@ int main(void)
                     xUSART.USART1ReceivedNum = 0;
                 }
                 
-                // --- 2. 周期性上报数据 (示例) ---
-                MQTT_Publish_Temperatures_Random();
-                delay_ms(10000); // 例如每10秒上报一次
+                // --- 任务2: 检查是否到了上报数据的时间 ---
+                // 使用您库中的 System_GetTimeMs() 函数来判断时间间隔
+                if (System_GetTimeMs() - last_report_time > report_interval_ms) 
+                {
+                    printf("INFO: It's time to report sensor data.\r\n");
+                    
+                    // 执行上报函数
+                    // 注意：MQTT_Publish_Temperatures_Random() 内部有一个 delay_ms(1000)，
+                    // 这仍然会造成1秒的阻塞，但相比之前的11秒已经好很多了。
+                    // 这是一个可以接受的短期阻塞。
+                    MQTT_Publish_Temperatures_Random(); 
+                    
+                    // 更新“上次上报时间”为当前时间
+                    last_report_time = System_GetTimeMs(); 
+                }
+
+                // 主循环中不再有任何长的 delay_ms()
+                // CPU 现在可以快速地在“检查消息”和“检查上报时间”之间轮询，
+                // 确保对云端指令的响应非常迅速。
             }
         }
         else
         {
-            // [新增] 订阅失败处理
+            // 订阅失败处理 (这部分不变)
             printf("FATAL ERROR: Failed to subscribe to topics. Halting.\r\n");
-            // 在这里可以闪烁一个错误LED灯，然后进入死循环
             while(1)
             {
-                LED1_TOGGLE; // 假设 LED1 用于错误指示
-                delay_ms(200);
+                LED1_TOGGLE;
+                delay_ms(200); 
             }
         }
     }
     else
     {
-        // 连接失败处理
+        // 连接失败处理 (这部分不变)
         printf("FATAL ERROR: Failed to connect to MQTT server. Halting.\r\n");
         while(1)
         {
-            LED2_TOGGLE; // 假设 LED2 用于连接失败指示
-            delay_ms(500);
+            LED2_TOGGLE;
+            delay_ms(500); 
         }
     }
 }
