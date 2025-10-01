@@ -363,16 +363,16 @@ void MQTT_Publish_All_Properties_Random(void)
 
 
 /**
- * @brief [新增] 仅上报 temp1 和 temp2 两个温度属性
- * @note  这是更精简的分包，用于测试资源限制的临界点。
+ * @brief [安全修正版] 仅上报 temp1 和 temp2 两个温度属性
+ * @note  使用 snprintf 替代 sprintf，从根本上防止缓冲区溢出风险。
  */
-void MQTT_Publish_Two_Temperatures(int temp1, int temp2)
+void MQTT_Publish_Temp1_Temp2(int temp1, int temp2)
 {
     // 每次调用都增加消息ID
     g_message_id++;
 
-    // 1. 构建只包含两个温度属性的 JSON 负载
-    sprintf(g_json_payload, 
+    // 1. [修改] 使用 snprintf 安全地构建 JSON 负载
+    snprintf(g_json_payload, JSON_PAYLOAD_SIZE,
         "{\\\"id\\\":\\\"%u\\\",\\\"version\\\":\\\"1.0\\\",\\\"params\\\":{"
         "\\\"temp1\\\":{\\\"value\\\":%d},"
         "\\\"temp2\\\":{\\\"value\\\":%d}"
@@ -381,8 +381,9 @@ void MQTT_Publish_Two_Temperatures(int temp1, int temp2)
         temp1, temp2
     );
 
-    // 2. 构建 AT+QMTPUB 指令
-    sprintf(g_cmd_buffer, "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/thing/property/post\",\"%s\"\r\n",
+    // 2. [修改] 使用 snprintf 安全地构建 AT+QMTPUB 指令
+    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
+            "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/thing/property/post\",\"%s\"\r\n",
             MQTT_PRODUCT_ID, 
             MQTT_DEVICE_NAME,
             g_json_payload);
@@ -390,14 +391,15 @@ void MQTT_Publish_Two_Temperatures(int temp1, int temp2)
     // 3. 通过串口发送指令
     USART1_SendString(g_cmd_buffer);
 
-    // 4. 等待模块处理
+    // 4. 等待模块处理 (提示：在正式产品中，建议使用非阻塞方式)
     delay_ms(1000); 
 }
 
 /**
- * @brief [新增] 生成随机数据并调用“上报两个温度”的函数
+ * @brief [修正版] 生成随机数据并调用“上报两个温度”的函数
+ * @note  此函数逻辑不变，但它现在调用的是上面那个更安全的版本。
  */
-void MQTT_Publish_Two_Temps_Random(void)
+void MQTT_Publish_Temp1_Temp2_Random(void)
 {
     int temp1, temp2;
     
@@ -412,6 +414,57 @@ void MQTT_Publish_Two_Temps_Random(void)
     MQTT_Publish_Two_Temperatures(temp1, temp2);
 }
 
+
+/**
+ * @brief [新增] 仅上报 temp3 和 temp4 两个温度属性
+ * @note  使用 snprintf 防止缓冲区溢出。
+ */
+void MQTT_Publish_Temp3_Temp4(int temp3, int temp4)
+{
+    // 每次调用都增加消息ID
+    g_message_id++;
+
+    // 1. 构建只包含 temp3 和 temp4 属性的 JSON 负载
+    snprintf(g_json_payload, JSON_PAYLOAD_SIZE,
+        "{\\\"id\\\":\\\"%u\\\",\\\"version\\\":\\\"1.0\\\",\\\"params\\\":{"
+        "\\\"temp3\\\":{\\\"value\\\":%d},"
+        "\\\"temp4\\\":{\\\"value\\\":%d}"
+        "}}",
+        g_message_id,
+        temp3, temp4
+    );
+
+    // 2. 构建 AT+QMTPUB 指令
+    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
+            "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/thing/property/post\",\"%s\"\r\n",
+            MQTT_PRODUCT_ID, 
+            MQTT_DEVICE_NAME,
+            g_json_payload);
+
+    // 3. 通过串口发送指令
+    USART1_SendString(g_cmd_buffer);
+
+    // 4. 等待模块处理
+    delay_ms(1000); 
+}
+
+/**
+ * @brief [新增] 生成随机数据并调用“上报temp3和temp4”的函数
+ */
+void MQTT_Publish_Temp3_Temp4_Random(void)
+{
+    int temp3, temp4;
+    
+    // 生成 30 到 40 度之间的随机基准温度 (假设这是另一组传感器)
+    int base_temp = 30 + (rand() % 11); 
+
+    // 两个监测点温度
+    temp3 = base_temp + (rand() % 6) - 3; // 波动范围稍大一些
+    temp4 = base_temp + (rand() % 6) - 3;
+
+    // --- 调用只上报两个温度的函数 ---
+    MQTT_Publish_Temp3_Temp4(temp3, temp4);
+}
 
 
 
@@ -564,18 +617,6 @@ void MQTT_Publish_Only_Temperatures(int temp1, int temp2, int temp3, int temp4)
     delay_ms(1000); // 因为报文变短了，延时可以适当缩短
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 /**
  * @brief [新增] 生成随机的模拟温度数据，并调用新函数上报到云平台
  */
@@ -595,7 +636,6 @@ void MQTT_Publish_Temperatures_Random(void)
     // --- 调用只上报温度的函数 ---
     MQTT_Publish_Only_Temperatures(temp1, temp2, temp3, temp4);
 }
-
 
 /**
  * @brief 主函数
