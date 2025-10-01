@@ -7,12 +7,12 @@
 #include "stdlib.h"
 #include "bsp_usart.h"
 #include "stdbool.h" // 引入布尔类型头文件
+#include <ctype.h>   // [新增] 包含此头文件以使用 isspace() 函数
 
 // 将 g_cmd_buffer 的大小从 1024 增加到 2048
 static char g_cmd_buffer[4096];
 static char g_json_payload[4096]; 
 static unsigned int g_message_id = 0;
-
 
 // --- [新增] 定义全局变量来存储从云端下发的状态 ---
 int g_crop_stage = 0;           // 作物生长时期 (默认为0)
@@ -35,7 +35,9 @@ int g_intervention_status = 0;  // 人工干预状态 (默认为0)
  ===============================================================================
 */
 
-
+// 将 g_cmd_buffer 的大小从 1024 增加到 2048
+#define CMD_BUFFER_SIZE 4096
+#define JSON_PAYLOAD_SIZE 4096
 
 /*
  ===============================================================================
@@ -163,8 +165,7 @@ void MQTT_Publish_All_Properties(
     // C语言中，bool转为字符串 "true" 或 "false"
     const char* str_sprinklers = sprinklers_available ? "true" : "false";
     const char* str_fans = fans_available ? "true" : "false";
-    const char* str_heaters = heaters_available ? "true" : "false";
-    int written_chars = 0;   
+    const char* str_heaters = heaters_available ? "true" : "false"; 
     g_message_id++;
     // 构建与日志完全一致的 'params' JSON 负载
     sprintf(g_json_payload, 
@@ -186,7 +187,7 @@ void MQTT_Publish_All_Properties(
         g_message_id,
         ambient_temp, humidity, pressure, wind_speed,
         temp1, temp2, temp3, temp4,
-        crop_stage, intervention_status,
+        g_crop_stage, g_intervention_status,
         str_sprinklers, str_fans, str_heaters
     );
     // Topic 必须使用 'thing/property/post'
@@ -355,7 +356,7 @@ void MQTT_Publish_All_Properties_Random(void)
     MQTT_Publish_All_Properties(
         ambient_temp, humidity, pressure, wind_speed,
         temp1, temp2, temp3, temp4,
-        crop_stage, intervention_status,
+        g_crop_stage, g_intervention_status,
         sprinklers_available, fans_available, heaters_available
     );
 }
@@ -411,7 +412,7 @@ void MQTT_Publish_Temp1_Temp2_Random(void)
     temp2 = base_temp + (rand() % 5) - 2;
 
     // --- 调用只上报两个温度的函数 ---
-    MQTT_Publish_Two_Temperatures(temp1, temp2);
+    MQTT_Publish_Temp1_Temp2(temp1, temp2);
 }
 
 
@@ -670,11 +671,13 @@ int main(void)
                 // 确保接收到的数据是一个有效的C字符串
                 xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
                 // 调用一个总的函数来处理所有收到的消息
-                Process_MQTT_Message((char*)xUSART.USART1ReceivedBuffer);                
+                Process_MQTT_Message_Robust((char*)xUSART.USART1ReceivedBuffer);                
                 // 【重要】处理完毕后，清空接收计数器，为下次接收做准备
                 xUSART.USART1ReceivedNum = 0;
             }
-            MQTT_Publish_Two_Temps_Random();
+            
         }
     }
 }
+
+

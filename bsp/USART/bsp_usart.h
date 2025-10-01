@@ -72,6 +72,7 @@ volatile uint8_t g_usart1_new_line_received = 0;
 #define U4_RX_BUF_SIZE            1024              // --- 有效区域：仅在各个USARTx的中断服务函数中工作;
 #define U5_RX_BUF_SIZE            1024              // --- 主要作用:  1:配合空闲中断接收数据帧;  2:灵活配置缓存大小;  3:防止数据溢出!!!!
 
+#define DEBUG_USART   USART2            // 用于调试的串口，可自行修改
 
 
 /*****************************************************************************

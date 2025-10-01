@@ -922,42 +922,21 @@ void UART5_SendString(char *stringTemp)
 
 
 
-//////////////////////////////////////////////////////////////  printf   //////////////////////////////////////////////////////////////
-/******************************************************************************
- * 功  能： printf函数支持代码
- *         【特别注意】加入以下代码, 使用printf函数时, 不再需要选择use MicroLIB
- * 参  数：
- * 返回值：
- * 备  注： 最后修改_2020年07月15日
- ******************************************************************************/
-//加入以下代码,支持printf函数,而不需要选择use MicroLIB
-#pragma import(__use_no_semihosting)
-struct __FILE
-{
-    int handle;
-};                     // 标准库需要的支持函数
-FILE __stdout;         // FILE 在stdio.h文件
-void _sys_exit(int x)
-{
-    x = x;             // 定义_sys_exit()以避免使用半主机模式
-}
+// bsp_usart.c 文件末尾
 
-
-
-int fputc(int ch, FILE *f)                   // 重定向fputc函数，使printf的输出，由fputc输出到UART,  这里使用串口2(USART2)
+/**
+ * @brief  重定向 printf到底层的 _write 函数 (适用于GCC编译器)
+ * @note   通过修改 bsp_usart.h 中的 DEBUG_USART 宏，可以轻松切换 printf 的输出串口
+ */
+int _write(int fd, char *pBuffer, int size)
 {
-#if 0                                        // 方式1-使用常用的poll方式发送数据，比较容易理解，但等待耗时大
-    while ((USART2->SR & 0X40) == 0);        // 等待上一次串口数据发送完成
-    USART2->DR = (u8) ch;                    // 写DR,串口2将发送数据
-    return ch;
-#else                                        // 方式2-使用queue+中断方式发送数据; 无需像方式1那样等待耗时，但要借助已写好的函数、环形缓冲
-    uint8_t c[1] = {(uint8_t)ch};
-    if (USARTx_DEBUG == USART1)    USART1_SendData(c, 1);
-    if (USARTx_DEBUG == USART2)    USART2_SendData(c, 1);
-    if (USARTx_DEBUG == USART3)    USART3_SendData(c, 1);
-    if (USARTx_DEBUG == UART4)     UART4_SendData(c, 1);
-    if (USARTx_DEBUG == UART5)     UART5_SendData(c, 1);
-    return ch;
-#endif
+    for (int i = 0; i < size; i++)
+    {
+        // 等待指定串口的发送缓冲区为空
+        while (USART_GetFlagStatus(DEBUG_USART, USART_FLAG_TXE) == RESET);
+        // 将数据发送到指定的串口
+        USART_SendData(DEBUG_USART, (uint8_t)pBuffer[i]);
+    }
+    return size;
 }
 
