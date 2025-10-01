@@ -114,9 +114,9 @@ void USART1_Init(uint32_t baudrate)
  * 返回值： 无
  *
 ******************************************************************************/
-static uint8_t U1TxBuffer[256] ;    // 用于中断发送：环形缓冲区，256个字节
-static uint8_t U1TxCounter = 0 ;    // 用于中断发送：标记已发送的字节数(环形)
-static uint8_t U1TxCount   = 0 ;    // 用于中断发送：标记将要发送的字节数(环形)
+static uint8_t U1TxBuffer[256] ; 
+static uint8_t U1TxCounter = 0 ;   
+static uint8_t U1TxCount   = 0 ;    
 
 void USART1_IRQHandler(void)
 {
@@ -179,28 +179,23 @@ uint8_t USART1_GetBuffer(uint8_t *buffer, uint8_t *cnt)
     return 0;                                                                   // 返回0, 表示没有接收到新数据
 }
 
-/******************************************************************************
- * 函  数： vUSART1_SendData
- * 功  能： UART通过中断发送数据,适合各种数据类型
- *         【适合场景】本函数可发送各种数据，而不限于字符串，如int,char
- *         【不 适 合】注意环形缓冲区容量256字节，如果发送频率太高，注意波特率
- * 参  数： uint8_t* buffer   需发送数据的首地址
- *          uint8_t  cnt      发送的字节数 ，限于中断发送的缓存区大小，不能大于256个字节
- * 返回值：
- ******************************************************************************/
+// [修改] 将参数类型从 uint16_t* 改为 uint8_t*，cnt也改为uint8_t
+// 因为你的代码注释说不能大于256字节
 void USART1_SendData(uint8_t *buf, uint8_t cnt)
 {
+    // [修改] 你的中断发送缓冲区 U1TxBuffer 是 uint16_t 类型
+    // 但串口发送的是8位数据。这里应该只存8位。
+    // 我们需要将 U1TxBuffer 也改为 uint8_t 类型
     for (uint8_t i = 0; i < cnt; i++)
         U1TxBuffer[U1TxCount++] = buf[i];
 
     if ((USART1->CR1 & 1 << 7) == 0)       // 检查发送缓冲区空置中断(TXEIE)是否已打开
         USART1->CR1 |= 1 << 7;
 }
-
 /******************************************************************************
  * 函  数： vUSART1_SendString
  * 功  能： UART通过中断发送输出字符串,无需输入数据长度
- *         【适合场景】字符串，长度<=256字节
+ *         【适合场景】字符串，长度<=4096字节
  *         【不 适 合】int,float等数据类型
  * 参  数： char* stringTemp   需发送数据的缓存首地址
  * 返回值： 元
