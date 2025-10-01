@@ -621,7 +621,7 @@ void Process_MQTT_Message_Robust(const char* buffer)
 
     // 尝试从消息中解析出 "id"，这是回复命令的凭证
     char request_id[32] = {0};
-    if (!find_and_parse_json_string(buffer, "\"id\"", request_id, sizeof(request_id)))
+    if (!find_and_parse_json_string(buffer, "id", request_id, sizeof(request_id)))
     {
         // 如果消息里没有 "id"，说明它不是一条需要回复的命令，直接忽略
         return;
@@ -638,7 +638,6 @@ void Process_MQTT_Message_Robust(const char* buffer)
         {
             g_crop_stage = parsed_value; // 执行命令：更新作物时期
             printf("ACTION: Cloud set 'crop_stage' to %d\r\n", g_crop_stage);
-            
             // 使用新工具回复：成功
             MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 200, "Success");
         }
