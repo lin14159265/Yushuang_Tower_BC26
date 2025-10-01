@@ -740,23 +740,23 @@ void MQTT_Publish_Temperatures_Random(void)
 
 
 /**
- * @brief 主函数 (采用非阻塞式架构, 并调用 system_f103.c 中的函数)
+ * @brief 主函数 (最终修正版：增加了串口空闲检测，确保接收完整的指令)
  */
 int main(void)
 {
-    // 1. 系统核心初始化 (这部分不变)
+    // 1. 系统核心初始化 (不变)
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
     System_SwdMode();
 
-    // 2. 外设初始化 (调用您库中的 SysTick 初始化)
-    System_SysTickInit(); 
+    // 2. 外设初始化 (不变)
+    System_SysTickInit();
     USART1_Init(115200);
     USART2_Init(115200);
     Led_Init();
 
     printf("System Initialized. Trying to connect to MQTT server...\r\n");
 
-    // 3. 连接与订阅 (这部分不变)
+    // 3. 连接与订阅 (不变)
     if (Robust_Initialize_And_Connect_MQTT())
     {
         printf("SUCCESS: MQTT Connected.\r\n");
@@ -768,66 +768,73 @@ int main(void)
             
             MQTT_Get_Desired_Crop_Stage();
             
-            // --- [核心修改] ---
-            // 定义一个变量，用于记录上一次上报数据的时间
-            // 注意：变量类型为 u64，以匹配 System_GetTimeMs() 的返回值类型
             u64 last_report_time = 0;
-            
-            // 定义上报周期，例如15秒 (15000毫秒)
             const uint32_t report_interval_ms = 15000;
 
-            // --- [核心修改] ---
-            // 进入永不阻塞的主循环
+            // --- [核心修改：增加用于空闲检测的变量] ---
+            unsigned int last_recv_num = 0;
+            u64 last_recv_time = 0;
+            const uint32_t recv_idle_timeout_ms = 50; // 定义50毫秒为总线空闲超时
+
             while (1)
             {
-                // --- 任务1: 随时检查并处理下行消息 (这个任务现在可以被非常频繁地执行) ---
+                // --- 任务1: [升级版] 检查并处理下行消息 (带空闲检测) ---
                 if (xUSART.USART1ReceivedNum > 0)
                 {
-                    xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
-                    Process_MQTT_Message_Robust((char*)xUSART.USART1ReceivedBuffer);                
-                    xUSART.USART1ReceivedNum = 0;
+                    // 如果接收计数器 > 上次记录的计数器，说明有新数据进来
+                    if (xUSART.USART1ReceivedNum > last_recv_num)
+                    {
+                        // 更新“上次接收到数据的时间”
+                        last_recv_time = System_GetTimeMs();
+                        // 更新“上次记录的计数器”
+                        last_recv_num = xUSART.USART1ReceivedNum;
+                    }
+                    
+                    // 检查“当前时间”与“上次接收到数据的时间”之差是否超过了空闲超时阈值
+                    // 并且确保接收缓冲区里确实有数据 (last_recv_num > 0)
+                    if ((last_recv_num > 0) && (System_GetTimeMs() - last_recv_time > recv_idle_timeout_ms))
+                    {
+                        // 如果超过了50ms没有新数据进来，我们判定这是一条完整的消息
+                        printf("INFO: Full message received after idle period.\r\n");
+                        
+                        // --- 开始处理 ---
+                        xUSART.USART1ReceivedBuffer[xUSART.USART1ReceivedNum] = '\0';
+                        Process_MQTT_Message_Robust((char*)xUSART.USART1ReceivedBuffer);                
+                        
+                        // --- 处理完毕后，彻底清零所有状态 ---
+                        xUSART.USART1ReceivedNum = 0;
+                        last_recv_num = 0;
+                    }
                 }
                 
-                // --- 任务2: 检查是否到了上报数据的时间 ---
-                // 使用您库中的 System_GetTimeMs() 函数来判断时间间隔
-                if (System_GetTimeMs() - last_report_time > report_interval_ms) 
+                // --- 任务2: 周期性上报数据 (不变) ---
+                if (System_GetTimeMs() - last_report_time > report_interval_ms)
                 {
                     printf("INFO: It's time to report sensor data.\r\n");
-                    
-                    // 执行上报函数
-                    // 注意：MQTT_Publish_Temperatures_Random() 内部有一个 delay_ms(1000)，
-                    // 这仍然会造成1秒的阻塞，但相比之前的11秒已经好很多了。
-                    // 这是一个可以接受的短期阻塞。
                     MQTT_Publish_Temperatures_Random(); 
-                    
-                    // 更新“上次上报时间”为当前时间
-                    last_report_time = System_GetTimeMs(); 
+                    last_report_time = System_GetTimeMs();
                 }
-
-                // 主循环中不再有任何长的 delay_ms()
-                // CPU 现在可以快速地在“检查消息”和“检查上报时间”之间轮询，
-                // 确保对云端指令的响应非常迅速。
             }
         }
         else
         {
-            // 订阅失败处理 (这部分不变)
+            // 订阅失败处理 (不变)
             printf("FATAL ERROR: Failed to subscribe to topics. Halting.\r\n");
             while(1)
             {
                 LED1_TOGGLE;
-                delay_ms(200); 
+                delay_ms(200);
             }
         }
     }
     else
     {
-        // 连接失败处理 (这部分不变)
+        // 连接失败处理 (不变)
         printf("FATAL ERROR: Failed to connect to MQTT server. Halting.\r\n");
         while(1)
         {
             LED2_TOGGLE;
-            delay_ms(500); 
+            delay_ms(500);
         }
     }
 }
