@@ -13,6 +13,12 @@ static char g_cmd_buffer[4096];
 static char g_json_payload[4096]; 
 static unsigned int g_message_id = 0;
 
+
+// --- [新增] 定义全局变量来存储从云端下发的状态 ---
+int g_crop_stage = 0;           // 作物生长时期 (默认为0)
+int g_intervention_status = 0;  // 人工干预状态 (默认为0)
+
+
 // --- 1. 设备所属的产品ID ---
 #define MQTT_PRODUCT_ID  "30w1g93kaf"
 // --- 2. 设备的名称 (也将用作 ClientID) ---
@@ -231,7 +237,7 @@ void MQTT_Post_Frost_Alert_Event(float current_temp)
  *        其 Topic 为 "$sys/.../thing/property/desired/get/reply"。
  *        您需要在 Process_MQTT_Message 函数中添加对这个 reply 主题的处理逻辑。
  */
- /*
+ 
 void MQTT_Get_Desired_Crop_Stage(void)
 {
     char json_payload[256]; 
@@ -252,51 +258,7 @@ void MQTT_Get_Desired_Crop_Stage(void)
 
     USART1_SendString(g_cmd_buffer);
     delay_ms(1000);
-}```
-
-#### **如何使用及处理后续逻辑？**
-
-1.  **调用时机**: 可以在设备初始化完成、MQTT连接成功后调用一次，以确保开机时与云端状态同步。
-
-    ```c
-    // 在 main() 函数中
-    // ...
-    Initialize_And_Connect_MQTT();
-    MQTT_Subscribe_Topics(); // 假设您有一个订阅所有主题的函数
-    
-    // 开机后，主动向云平台查询一次期望的作物时期
-    printf("Getting desired crop stage from cloud...\r\n");
-    MQTT_Get_Desired_Crop_Stage();
-    // ...
-    ```
-
-2.  **处理云端回复 (非常重要！)**:
-    调用这个函数后，您不会马上得到结果。结果会在稍后由云平台通过一条下行消息发给您。您必须在 `Process_MQTT_Message` 函数中添加相应的处理代码来接收这个结果。
-
-    ```c
-    void Process_MQTT_Message(const char* buffer)
-    {
-        // ... 原有的其他 if-else if 判断 ...
-
-        // [新增] 处理“获取期望值”的回复
-        else if (strstr(buffer, "/thing/property/desired/get/reply") != NULL)
-        {
-            printf("Received 'desired value get' reply.\r\n");
-            char* p_start = strstr(buffer, "\"crop_stage\\\":");
-            if (p_start)
-            {
-                p_start += strlen("\"crop_stage\\\":");
-                int desired_stage = atoi(p_start);
-                printf("Desired crop stage is: %d\r\n", desired_stage);
-                // 在这里根据获取到的 desired_stage 更新您的设备状态
-                // CROP_SetStage(desired_stage);
-            }
-        }
-    }
-    ```
-
-现在您已经拥有了与模拟器功能完全对应的三个核心上行操作的STM32代码。
-*/
+}
 
 
 /**
@@ -364,9 +326,7 @@ void MQTT_Publish_All_Properties_Random(void)
 {
     int ambient_temp, humidity, pressure, wind_speed;
     int temp1, temp2, temp3, temp4;
-    // 下面这些通常是固定的或者由逻辑控制的，但也暂时给个初始值
-    int crop_stage = 0;
-    int intervention_status = 0;
+    
     bool sprinklers_available = true;
     bool fans_available = true;
     bool heaters_available = true;
@@ -455,46 +415,119 @@ void MQTT_Publish_Two_Temps_Random(void)
 
 
 
+/**
+ * @brief 从一个JSON格式的字符串中查找指定的键(key)，并解析其对应的整数值。
+ * @param buffer: 包含JSON内容的字符串。
+ * @param key:    要查找的JSON键名。
+ * @param result: 如果解析成功，整数值将被存放在这个指针指向的地址。
+ * @return int:   如果成功找到并解析了整数，返回1；否则返回0。
+ * @note   这是一个不依赖任何JSON库的安全解析实现。
+ *         它能处理键和值周围的空格，并能验证值的合法性。
+ */
+int find_and_parse_json_int(const char* buffer, const char* key, int* result)
+{
+    char search_key[64];
+    // 1. 构造要搜索的键格式，例如: "crop_stage"
+    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+
+    // 2. 查找键的位置
+    char* p_key = strstr(buffer, search_key);
+    if (p_key == NULL) {
+        return 0; // 没找到键
+    }
+
+    // 3. 移动指针到键的末尾
+    char* p_val = p_key + strlen(search_key);
+
+    // 4. 跳过键和冒号之间的所有空格
+    while (*p_val && isspace((unsigned char)*p_val)) {
+        p_val++;
+    }
+
+    // 5. 检查后面是否是冒号
+    if (*p_val != ':') {
+        return 0; // 格式错误，键后面不是冒号
+    }
+    p_val++; // 跳过冒号
+
+    // 6. 使用strtol进行安全的字符串到长整型转换
+    char* end_ptr;
+    long parsed_value = strtol(p_val, &end_ptr, 10);
+
+    // 7. 验证转换是否成功
+    // 如果p_val和end_ptr指向同一个地址，说明冒号后面第一个字符就不是数字，转换失败。
+    if (p_val == end_ptr) {
+        return 0; // 转换失败
+    }
+
+    // 8. 如果成功，将结果存入result指针
+    *result = (int)parsed_value;
+    return 1; // 成功
+}
+
 
 /**
- * @brief [新增] 统一处理所有从云平台接收到的MQTT消息
+ * @brief [健壮版] 统一处理所有从云平台接收到的MQTT消息
  * @param buffer: 指向串口接收缓冲区的指针
+ * @note  此版本不使用外部库，但通过一个辅助函数实现了更安全的JSON解析。
  */
-void Process_MQTT_Message(const char* buffer)
+void Process_MQTT_Message_Robust(const char* buffer)
 {
-    // 首先，打印出所有接收到的内容，方便调试
     printf("RECV: %s\r\n", buffer);
+    int parsed_value;
 
     // --- 1. 判断是否为“属性设置” (`/thing/property/set`) ---
     if (strstr(buffer, "/thing/property/set") != NULL)
     {
         printf("DEBUG: Received a 'Property Set' command.\r\n");
-        // 在这里添加解析JSON并更新本地变量的代码
-        // 例如，解析 crop_stage 的值
+        if (find_and_parse_json_int(buffer, "crop_stage", &parsed_value))
+        {
+            g_crop_stage = parsed_value;
+            printf("ACTION: Cloud set 'crop_stage' to %d\r\n\r\n", g_crop_stage);
+        }
+        else
+        {
+            printf("WARN: Failed to parse 'crop_stage' from property set message.\r\n\r\n");
+        }
     }
     // --- 2. 判断是否为“服务调用” (`/thing/service/invoke`) ---
     else if (strstr(buffer, "/thing/service/invoke") != NULL)
     {
         printf("DEBUG: Received a 'Service Invoke' command.\r\n");
-        // 在这里添加解析JSON并执行相应服务的代码
-        // 例如，解析 set_intervention 的方法并控制继电器
+        // 可以先判断是哪个服务，再解析参数
+        if (strstr(buffer, "\"method\":\"set_intervention\""))
+        {
+            if (find_and_parse_json_int(buffer, "status", &parsed_value))
+            {
+                g_intervention_status = parsed_value;
+                printf("ACTION: Cloud invoked 'set_intervention' with status %d\r\n\r\n", g_intervention_status);
+            }
+            else
+            {
+                printf("WARN: Failed to parse 'status' from service invoke message.\r\n\r\n");
+            }
+        }
     }
-    // --- 3. 判断是否为“旧版命令” (`/cmd/request/`) ---
+    // --- 3. 判断是否为“获取期望值”的回复 (`/desired/get/reply`) ---
+    else if (strstr(buffer, "/thing/property/desired/get/reply") != NULL)
+    {
+        printf("DEBUG: Received a 'Desired Value Get' reply.\r\n");
+        if (find_and_parse_json_int(buffer, "crop_stage", &parsed_value))
+        {
+            g_crop_stage = parsed_value;
+            printf("ACTION: Synced desired 'crop_stage' from cloud: %d\r\n\r\n", g_crop_stage);
+        }
+        else
+        {
+            printf("WARN: Failed to parse desired 'crop_stage' from reply.\r\n\r\n");
+        }
+    }
+    // --- 4. 判断是否为“旧版命令” (`/cmd/request/`) ---
     else if (strstr(buffer, "/cmd/request/") != NULL)
     {
         printf("DEBUG: Received a legacy 'Command Request'.\r\n");
-        // 在这里添加解析并执行旧版命令的代码
-    }
-    // --- 4. 判断是否为“获取期望值”的回复 (`/desired/get/reply`) ---
-    // (如果您调用了 MQTT_Get_Desired_Crop_Stage() 函数)
-    else if (strstr(buffer, "/desired/get/reply") != NULL)
-    {
-        printf("DEBUG: Received a 'Desired Get Reply'.\r\n");
-        // 在这里添加解析期望值的代码
     }
 }
-
-
 
 /**
  * @brief [新增] 仅上报四个温度属性
@@ -587,6 +620,8 @@ int main(void)
         // 连接成功后，再订阅所有需要的主题
         MQTT_Subscribe_All_Topics();   
         // 进入主循环，开始上报数据和接收命令
+        // --- [新增] 开机后，主动向云平台查询一次期望的作物时期 ---
+        MQTT_Get_Desired_Crop_Stage();
         while (1)
         {
             // --- 1. 检查并处理从云平台下发的数据 (核心的“听”逻辑) ---
