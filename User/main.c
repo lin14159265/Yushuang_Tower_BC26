@@ -527,7 +527,18 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
              "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
              reply_topic, g_json_payload);
 
-    return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 3000);
+    // --- [核心修改] ---
+    // 1. 先发送指令并等待模块的 "OK" 确认
+    bool success = MQTT_Send_AT_Command(g_cmd_buffer, "OK", 3000);
+
+    // 2. 如果模块确认已受理，我们给它一点时间去处理真正的网络发送
+    if (success)
+    {
+        // 这个延时非常重要，它让出了CPU，也给了模块足够的时间去完成后台的网络任务
+        delay_ms(500); // 增加500毫秒的延时
+    }
+
+    return success;
 }
 
 
