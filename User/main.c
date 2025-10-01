@@ -19,6 +19,12 @@ int g_crop_stage = 0;           // 作物生长时期 (默认为0)
 int g_intervention_status = 0;  // 人工干预状态 (默认为0)
 
 
+typedef enum {
+    REPLY_TO_PROPERTY_SET,
+    REPLY_TO_SERVICE_INVOKE
+} ReplyType;
+
+
 // --- 1. 设备所属的产品ID ---
 #define MQTT_PRODUCT_ID  "30w1g93kaf"
 // --- 2. 设备的名称 (也将用作 ClientID) ---
@@ -488,6 +494,70 @@ void MQTT_Publish_Temp3_Temp4_Random(void)
 }
 
 
+bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* identifier, int code, const char* msg)
+{
+    char reply_topic[128];
+
+    snprintf(g_json_payload, 4096,
+             "{\\\"id\\\":\\\"%s\\\",\\\"code\\\":%d,\\\"msg\\\":\\\"%s\\\",\\\"data\\\":{}}",
+             request_id, code, msg);
+
+    switch (reply_type)
+    {
+        case REPLY_TO_PROPERTY_SET:
+            snprintf(reply_topic, sizeof(reply_topic),
+                     "$sys/%s/%s/thing/property/set_reply",
+                     MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
+            break;
+
+        case REPLY_TO_SERVICE_INVOKE:
+            if (identifier == NULL || identifier[0] == '\0') {
+                return false;
+            }
+            snprintf(reply_topic, sizeof(reply_topic),
+                     "$sys/%s/%s/thing/service/%s/invoke_reply",
+                     MQTT_PRODUCT_ID, MQTT_DEVICE_NAME, identifier);
+            break;
+
+        default:
+            return false;
+    }
+
+    snprintf(g_cmd_buffer, 4096,
+             "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
+             reply_topic, g_json_payload);
+
+    return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 3000);
+}
+
+
+
+int find_and_parse_json_string(const char* buffer, const char* key, char* result, int max_len)
+{
+    char search_key[64];
+    snprintf(search_key, sizeof(search_key), "\"%s\":", key);
+
+    char* p_key = strstr(buffer, search_key);
+    if (p_key == NULL) return 0;
+
+    char* p_val_start = p_key + strlen(search_key);
+
+    while (*p_val_start && isspace((unsigned char)*p_val_start)) p_val_start++;
+    if (*p_val_start != '\"') return 0;
+    p_val_start++;
+
+    char* p_val_end = strchr(p_val_start, '\"');
+    if (p_val_end == NULL) return 0;
+
+    int val_len = p_val_end - p_val_start;
+    if (val_len >= max_len) val_len = max_len - 1;
+
+    memcpy(result, p_val_start, val_len);
+    result[val_len] = '\0';
+
+    return 1;
+}
+
 
 /**
  * @brief 从一个JSON格式的字符串中查找指定的键(key)，并解析其对应的整数值。
@@ -548,58 +618,67 @@ int find_and_parse_json_int(const char* buffer, const char* key, int* result)
 void Process_MQTT_Message_Robust(const char* buffer)
 {
     printf("RECV: %s\r\n", buffer);
-    int parsed_value;
 
-    // --- 1. 判断是否为“属性设置” (`/thing/property/set`) ---
+    // 尝试从消息中解析出 "id"，这是回复命令的凭证
+    char request_id[32] = {0};
+    if (!find_and_parse_json_string(buffer, "\"id\"", request_id, sizeof(request_id)))
+    {
+        // 如果消息里没有 "id"，说明它不是一条需要回复的命令，直接忽略
+        return;
+    }
+
+    // --- 判断是哪种命令，并处理 ---
+
+    // 1. 是不是“属性设置”命令？
     if (strstr(buffer, "/thing/property/set") != NULL)
     {
         printf("DEBUG: Received a 'Property Set' command.\r\n");
+        int parsed_value;
         if (find_and_parse_json_int(buffer, "crop_stage", &parsed_value))
         {
-            g_crop_stage = parsed_value;
-            printf("ACTION: Cloud set 'crop_stage' to %d\r\n\r\n", g_crop_stage);
+            g_crop_stage = parsed_value; // 执行命令：更新作物时期
+            printf("ACTION: Cloud set 'crop_stage' to %d\r\n", g_crop_stage);
+            
+            // 使用新工具回复：成功
+            MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 200, "Success");
         }
         else
         {
-            printf("WARN: Failed to parse 'crop_stage' from property set message.\r\n\r\n");
+            // 回复：失败，因为没找到 crop_stage 参数
+            MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 400, "Bad Request");
         }
     }
-    // --- 2. 判断是否为“服务调用” (`/thing/service/invoke`) ---
+    // 2. 是不是“服务调用”命令？
     else if (strstr(buffer, "/thing/service/invoke") != NULL)
     {
         printf("DEBUG: Received a 'Service Invoke' command.\r\n");
-        // 可以先判断是哪个服务，再解析参数
-        if (strstr(buffer, "\"method\":\"set_intervention\""))
+        char method[64] = {0}; // 用来存放服务名，比如 "set_intervention"
+        if (find_and_parse_json_string(buffer, "\"method\"", method, sizeof(method)))
         {
-            if (find_and_parse_json_int(buffer, "status", &parsed_value))
+            // 判断具体是哪个服务
+            if (strcmp(method, "set_intervention") == 0)
             {
-                g_intervention_status = parsed_value;
-                printf("ACTION: Cloud invoked 'set_intervention' with status %d\r\n\r\n", g_intervention_status);
+                int parsed_status;
+                if (find_and_parse_json_int(buffer, "status", &parsed_status))
+                {
+                    g_intervention_status = parsed_status; // 执行命令：更新干预状态
+                    printf("ACTION: Cloud invoked 'set_intervention' with status %d\r\n", g_intervention_status);
+                    
+                    // 使用新工具回复：成功
+                    MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 200, "Intervention status updated");
+                }
+                else
+                {
+                     // 回复：失败，因为没找到 status 参数
+                     MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 400, "Bad Request");
+                }
             }
             else
             {
-                printf("WARN: Failed to parse 'status' from service invoke message.\r\n\r\n");
+                // 回复：失败，因为不认识这个服务
+                MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 404, "Service not found");
             }
         }
-    }
-    // --- 3. 判断是否为“获取期望值”的回复 (`/desired/get/reply`) ---
-    else if (strstr(buffer, "/thing/property/desired/get/reply") != NULL)
-    {
-        printf("DEBUG: Received a 'Desired Value Get' reply.\r\n");
-        if (find_and_parse_json_int(buffer, "crop_stage", &parsed_value))
-        {
-            g_crop_stage = parsed_value;
-            printf("ACTION: Synced desired 'crop_stage' from cloud: %d\r\n\r\n", g_crop_stage);
-        }
-        else
-        {
-            printf("WARN: Failed to parse desired 'crop_stage' from reply.\r\n\r\n");
-        }
-    }
-    // --- 4. 判断是否为“旧版命令” (`/cmd/request/`) ---
-    else if (strstr(buffer, "/cmd/request/") != NULL)
-    {
-        printf("DEBUG: Received a legacy 'Command Request'.\r\n");
     }
 }
 
@@ -658,9 +737,9 @@ void MQTT_Publish_Temperatures_Random(void)
     MQTT_Publish_Only_Temperatures(temp1, temp2, temp3, temp4);
 }
 
-/**
- * @brief 主函数
- */
+
+
+
 /**
  * @brief 主函数
  */
