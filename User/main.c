@@ -156,114 +156,6 @@ bool Robust_Initialize_And_Connect_MQTT(void)
     return true; // 所有步骤都成功了！
 }
 
-/**
- * @brief [修正版] 上报所有属性，完全采用您指定的、已被验证可行的发送模式
- * @note  此函数严格遵循 MQTT_Publish_Only_Temperatures 的实现方式。
- *        JSON 负载在C代码中仅使用 \" 进行转义。
- */
-void MQTT_Publish_All_Properties(
-    int ambient_temp, int humidity, int pressure, int wind_speed,
-    int temp1, int temp2, int temp3, int temp4,
-    int crop_stage, int intervention_status,
-    bool sprinklers_available, bool fans_available, bool heaters_available
-)
-{
-    // C语言中，bool转为字符串 "true" 或 "false"
-    const char* str_sprinklers = sprinklers_available ? "true" : "false";
-    const char* str_fans = fans_available ? "true" : "false";
-    const char* str_heaters = heaters_available ? "true" : "false"; 
-    
-    g_message_id++;
-
-    // 1. 构建JSON负载，严格按照您的要求，仅使用 \" 进行转义
-    //    为了安全，这里仍然推荐使用 snprintf
-    snprintf(g_json_payload, JSON_PAYLOAD_SIZE, 
-        "{\"id\":\"%u\",\"version\":\"1.0\",\"params\":{"
-        "\"ambient_temp\":{\"value\":%d},"
-        "\"humidity\":{\"value\":%d},"
-        "\"pressure\":{\"value\":%d},"
-        "\"wind_speed\":{\"value\":%d},"
-        "\"temp1\":{\"value\":%d},"
-        "\"temp2\":{\"value\":%d},"
-        "\"temp3\":{\"value\":%d},"
-        "\"temp4\":{\"value\":%d},"
-        "\"crop_stage\":{\"value\":%d},"
-        "\"intervention_status\":{\"value\":%d},"
-        "\"sprinklers_available\":{\"value\":%s},"
-        "\"fans_available\":{\"value\":%s},"
-        "\"heaters_available\":{\"value\":%s}"
-        "}}",
-        g_message_id,
-        ambient_temp, humidity, pressure, wind_speed,
-        temp1, temp2, temp3, temp4,
-        g_crop_stage, g_intervention_status,
-        str_sprinklers, str_fans, str_heaters
-    );
-
-    // 2. 构建 AT+QMTPUB 指令，将上面的 g_json_payload 嵌入
-    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/thing/property/post\",\"%s\"\r\n",
-            MQTT_PRODUCT_ID, 
-            MQTT_DEVICE_NAME,
-            g_json_payload);
-
-    // 3. 通过串口直接发送最终拼接好的指令
-    USART1_SendString(g_cmd_buffer);
-
-    // 4. 等待模块处理和发送
-    delay_ms(2000); // 因为报文很长，延时相应地长一些
-}
-
-/**
- * @brief [新增] 生成一组随机的模拟传感器和状态数据，并上报所有属性
- * @note  此函数用于测试。在实际产品中，您应该用真实的传感器读数替换随机数生成。
- *        它会调用使用“提示符模式”发送的、更可靠的 MQTT_Publish_All_Properties 函数。
- */
-void MQTT_Publish_All_Properties_Random(void)
-{
-    // --- 1. 声明所有需要的局部变量 ---
-    int ambient_temp, humidity, pressure, wind_speed;
-    int temp1, temp2, temp3, temp4;
-    bool sprinklers_available, fans_available, heaters_available;
-
-    // --- 2. 生成符合实际场景的随机数据 ---
-    // rand() % N 会生成一个 0 到 N-1 之间的随机整数
-
-    // 环境传感器数据
-    ambient_temp = 15 + (rand() % 16); // 环境温度: 15 到 30 度
-    humidity = 40 + (rand() % 41);     // 相对湿度: 40% 到 80%
-    pressure = 990 + (rand() % 41);    // 大气压: 990 到 1030 hPa
-    wind_speed = rand() % 11;          // 风速: 0 到 10 m/s
-
-    // 四个监测点温度: 在环境温度的基础上，加上 -3 到 +3 的随机偏差
-    temp1 = ambient_temp + (rand() % 7) - 3; 
-    temp2 = ambient_temp + (rand() % 7) - 3;
-    temp3 = ambient_temp + (rand() % 7) - 3;
-    temp4 = ambient_temp + (rand() % 7) - 3;
-
-    // 设备可用状态 (随机决定设备是否可用)
-    sprinklers_available = (rand() % 2 == 1);
-    fans_available = (rand() % 2 == 1);
-    heaters_available = (rand() % 2 == 1);
-
-    // 打印一条日志，方便调试
-    printf("INFO: Generating random data to publish all properties...\r\n");
-
-    // --- 3. 调用上报函数，传入所有生成的数据 ---
-    // 注意: 作物生长时期(g_crop_stage)和人工干预状态(g_intervention_status)
-    // 是全局状态，直接使用它们的当前值，而不是生成随机值。
-    MQTT_Publish_All_Properties(
-        ambient_temp, humidity, pressure, wind_speed,
-        temp1, temp2, temp3, temp4,
-        g_crop_stage, g_intervention_status,
-        sprinklers_available, fans_available, heaters_available
-    );
-}
-
-
-
-
-
-
 
 
 /**
@@ -279,8 +171,8 @@ void MQTT_Post_Frost_Alert_Event(float current_temp)
     // 构建与日志完全一致的 'event post' JSON 负载
     // %.1f 表示将浮点数格式化为保留一位小数
     sprintf(json_payload, 
-        "{\\\"id\\\":\\\"%u\\\",\\\"version\\\":\\\"1.0\\\",\\\"params\\\":{"
-        "\\\"frost_alert\\\":{\\\"value\\\":{\\\"current_temp\\\":%.1f}}"
+        "{\"id\":\"%u\",\"version\":\"1.0\",\"params\":{"
+        "\"frost_alert\":{\"value\":{\"current_temp\":%.1f}}"
         "}}",
         g_message_id,
         current_temp
@@ -806,6 +698,9 @@ void MQTT_Publish_Environment_Data(int ambient_temp, int humidity, int pressure,
         g_message_id,
         ambient_temp, humidity, pressure, wind_speed
     );
+
+
+
 
     // 2. 构建 AT+QMTPUB 指令
     snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
