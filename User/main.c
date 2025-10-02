@@ -494,14 +494,82 @@ void MQTT_Publish_Temp3_Temp4_Random(void)
 }
 
 
+
+
+/**
+ * @brief [新增][最可靠的] 使用“数据模式”发送MQTT消息
+ * @param topic:   要发布到的主题
+ * @param payload: 要发送的JSON负载 (注意：是干净的JSON，不带C语言转义符)
+ * @return bool:   true 代表发布成功, false 代表失败
+ * @note   此函数使用 AT+QMTPUB 的“提示符”模式，先发送指令头，等待模块返回">"，
+ *         然后再发送数据负载。这是发送较长或包含特殊字符数据的最稳定方法。
+ */
+bool MQTT_Publish_Message_Prompt_Mode(const char* topic, const char* payload)
+{
+    // 1. 计算负载的长度
+    size_t payload_len = strlen(payload);
+
+    // 2. 构建第一部分AT指令，包含主题和数据长度
+    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, "AT+QMTPUB=0,0,0,0,\"%s\",%u\r\n", topic, payload_len);
+
+    // 3. 发送指令头，并等待模块返回数据输入提示符 ">"
+    //    这是一个关键的握手步骤。我们给它1秒的超时时间。
+    if (!MQTT_Send_AT_Command(g_cmd_buffer, ">", 1000))
+    {
+        printf("ERROR: Did not receive prompt '>' from module for publishing.\r\n");
+        return false;
+    }
+
+    // 4. 成功收到了 ">"，现在直接发送原始的 payload 数据
+    //    注意：这里我们不再使用 MQTT_Send_AT_Command，因为我们不需要等待特定的回复，
+    //    而是要等待最终的发布确认 "+QMTPUB: 0,0,0"。
+    printf("SEND_PAYLOAD: %s\r\n", payload);
+    USART1_SendString((char*)payload);
+
+    // 5. 发送完数据后，模块会进行网络操作，并最终返回发布结果。
+    //    我们等待 "+QMTPUB: 0,0,0" 作为成功的标志。网络操作需要更长的时间。
+    if (!MQTT_Send_AT_Command("\r\n", "+QMTPUB: 0,0,0", 5000)) // 发送一个换行符触发模块响应
+    {
+        printf("ERROR: Did not receive publish confirmation after sending payload.\r\n");
+        return false;
+    }
+
+    printf("INFO: Message on topic '%s' published successfully using prompt mode.\r\n", topic);
+    return true;
+}
+
+
+
+
+
+
+
+/**
+ * @brief [最终修正版] 回复云端命令，使用与平台日志完全一致的JSON模板和最可靠的发送方式
+ * @return bool: true 代表成功，false 代表失败
+ */
 bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* identifier, int code, const char* msg)
 {
     char reply_topic[128];
+    char clean_json_payload[256]; 
 
-    snprintf(g_json_payload, 4096,
-             "{\\\"id\\\":\\\"%s\\\",\\\"code\\\":%d,\\\"msg\\\":\\\"%s\\\",\\\"data\\\":{}}",
-             request_id, code, msg);
+    // --- [核心修改] ---
+    // 构建一个干净的、不含C语言转义符的JSON字符串。
+    // 这个格式精确匹配了您在成功日志中看到的平台模板。
+    // 我们忽略传入的 msg 参数，对于成功响应(code=200)，直接使用 "success"。
+    if (code == 200) {
+        snprintf(clean_json_payload, sizeof(clean_json_payload),
+                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"success\"}",
+                 request_id, code);
+    } else {
+        // 对于失败的响应，我们使用传入的 msg
+        snprintf(clean_json_payload, sizeof(clean_json_payload),
+                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"%s\"}",
+                 request_id, code, msg);
+    }
 
+
+    // 根据回复类型构建正确的目标Topic
     switch (reply_type)
     {
         case REPLY_TO_PROPERTY_SET:
@@ -523,22 +591,8 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
             return false;
     }
 
-    snprintf(g_cmd_buffer, 4096,
-             "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
-             reply_topic, g_json_payload);
-
-    // --- [核心修改] ---
-    // 1. 先发送指令并等待模块的 "OK" 确认
-    bool success = MQTT_Send_AT_Command(g_cmd_buffer, "OK", 3000);
-
-    // 2. 如果模块确认已受理，我们给它一点时间去处理真正的网络发送
-    if (success)
-    {
-        // 这个延时非常重要，它让出了CPU，也给了模块足够的时间去完成后台的网络任务
-        delay_ms(500); // 增加500毫秒的延时
-    }
-
-    return success;
+    // 调用我们刚刚创建的、最可靠的“数据模式”发送函数
+    return MQTT_Publish_Message_Prompt_Mode(reply_topic, clean_json_payload);
 }
 
 
@@ -622,73 +676,114 @@ int find_and_parse_json_int(const char* buffer, const char* key, int* result)
 
 
 /**
- * @brief [健壮版] 统一处理所有从云平台接收到的MQTT消息
+ * @brief [最终修正版] 统一处理所有从云平台接收到的MQTT消息，并增加回复状态检查
  * @param buffer: 指向串口接收缓冲区的指针
- * @note  此版本不使用外部库，但通过一个辅助函数实现了更安全的JSON解析。
+ * @note  此版本对每一次调用 MQTT_Send_Reply 都进行了返回值检查，
+ *        并通过日志明确反馈回复指令是否成功发送给了4G模块。
  */
 void Process_MQTT_Message_Robust(const char* buffer)
 {
+    // 打印收到的原始消息，这是调试的第一步
     printf("RECV: %s\r\n", buffer);
 
-    // 尝试从消息中解析出 "id"，这是回复命令的凭证
+    // 尝试从消息中解析出 "id"，这是所有回复的凭证
     char request_id[32] = {0};
     if (!find_and_parse_json_string(buffer, "id", request_id, sizeof(request_id)))
     {
-        // 如果消息里没有 "id"，说明它不是一条需要回复的命令，直接忽略
+        // 如果消息里连 "id" 字段都没有，说明它不是一条需要回复的命令，直接忽略
+        printf("DEBUG: Message received, but it has no 'id' field. No reply needed.\r\n");
         return;
     }
 
+    // 定义一个布尔变量，用于统一记录回复指令的发送结果
+    bool reply_sent_successfully = false;
+
     // --- 判断是哪种命令，并处理 ---
 
-    // 1. 是不是“属性设置”命令？
+    // 1. 是不是“属性设置”命令？ (Topic 包含 /thing/property/set)
     if (strstr(buffer, "/thing/property/set") != NULL)
     {
         printf("DEBUG: Received a 'Property Set' command.\r\n");
         int parsed_value;
+
+        // 尝试解析 crop_stage 参数
         if (find_and_parse_json_int(buffer, "crop_stage", &parsed_value))
         {
-            g_crop_stage = parsed_value; // 执行命令：更新作物时期
+            g_crop_stage = parsed_value; // 执行命令：更新全局变量
             printf("ACTION: Cloud set 'crop_stage' to %d\r\n", g_crop_stage);
-            // 使用新工具回复：成功
-            MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 200, "Success");
+            
+            // 尝试发送“成功”的回复，并记录结果
+            reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 200, "Success");
         }
         else
         {
-            // 回复：失败，因为没找到 crop_stage 参数
-            MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 400, "Bad Request");
+            // 如果没找到 crop_stage 参数，这是客户端的请求错误
+            printf("WARN: 'crop_stage' parameter not found in Property Set command.\r\n");
+            // 尝试发送“请求错误”的回复，并记录结果
+            reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 400, "Bad Request");
         }
     }
-    // 2. 是不是“服务调用”命令？
+    // 2. 是不是“服务调用”命令？ (Topic 包含 /thing/service/invoke)
     else if (strstr(buffer, "/thing/service/invoke") != NULL)
     {
         printf("DEBUG: Received a 'Service Invoke' command.\r\n");
         char method[64] = {0}; // 用来存放服务名，比如 "set_intervention"
-        if (find_and_parse_json_string(buffer, "\"method\"", method, sizeof(method)))
+
+        // 尝试解析 method (服务标识符)
+        if (find_and_parse_json_string(buffer, "method", method, sizeof(method)))
         {
             // 判断具体是哪个服务
             if (strcmp(method, "set_intervention") == 0)
             {
                 int parsed_status;
+                // 尝试解析该服务需要的 status 参数
                 if (find_and_parse_json_int(buffer, "status", &parsed_status))
                 {
                     g_intervention_status = parsed_status; // 执行命令：更新干预状态
                     printf("ACTION: Cloud invoked 'set_intervention' with status %d\r\n", g_intervention_status);
                     
-                    // 使用新工具回复：成功
-                    MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 200, "Intervention status updated");
+                    // 尝试发送“成功”的回复，并记录结果
+                    reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 200, "Intervention status updated");
                 }
                 else
                 {
-                     // 回复：失败，因为没找到 status 参数
-                     MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 400, "Bad Request");
+                     // 如果没找到 status 参数，这是客户端的请求错误
+                     printf("WARN: 'status' parameter not found for 'set_intervention' service.\r\n");
+                     // 尝试发送“请求错误”的回复，并记录结果
+                     reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 400, "Bad Request");
                 }
             }
             else
             {
-                // 回复：失败，因为不认识这个服务
-                MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 404, "Service not found");
+                // 如果平台调用的服务是我们不认识的
+                printf("WARN: Received invoke for an unknown service: '%s'.\r\n", method);
+                // 尝试发送“服务未找到”的回复，并记录结果
+                reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 404, "Service not found");
             }
         }
+        else
+        {
+            // 如果服务调用连 method 字段都没有，这是格式错误
+            printf("WARN: 'method' identifier not found in Service Invoke command.\r\n");
+            // 尝试发送“请求错误”的回复，并记录结果
+            // 注意：因为没有method，所以第二个参数传 "null" 或者一个空字符串
+            reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, "unknown", 400, "Bad Request");
+        }
+    }
+    else
+    {
+        // 如果收到的消息包含了 "id"，但 Topic 既不是 property/set 也不是 service/invoke
+        // 这可能是其他我们尚未处理的系统消息，比如 property/post/reply 等
+        printf("DEBUG: Received a message with 'id' on an unhandled topic. No reply needed.\r\n");
+        return; // 直接返回，不进入最后的日志打印环节
+    }
+
+    // --- [统一的最终状态报告] ---
+    // 在函数的最后，根据 reply_sent_successfully 的值，打印最终的执行结果日志
+    if (reply_sent_successfully) {
+        printf("INFO: Reply for request_id '%s' was successfully sent to the 4G module.\r\n\r\n", request_id);
+    } else {
+        printf("FATAL ERROR: FAILED to send reply for request_id '%s' to the 4G module. The module did not respond with 'OK' within the timeout period. This is the likely cause of the platform timeout!\r\n\r\n", request_id);
     }
 }
 
@@ -822,7 +917,8 @@ int main(void)
                 if (System_GetTimeMs() - last_report_time > report_interval_ms)
                 {
                     printf("INFO: It's time to report sensor data.\r\n");
-                    MQTT_Publish_Temperatures_Random(); 
+                    MQTT_Publish_Temperatures_Random();
+                    delay_ms(500); // 短暂延时，避免发送过快
                     last_report_time = System_GetTimeMs();
                 }
             }
