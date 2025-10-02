@@ -201,7 +201,7 @@ void MQTT_Publish_All_Properties(
             MQTT_PRODUCT_ID, 
             MQTT_DEVICE_NAME,
             g_json_payload);
-            LED3_ON;
+
     USART1_SendString(g_cmd_buffer);
     delay_ms(2000); // 报文很长，建议增加延时确保发送完整
 }
@@ -545,31 +545,50 @@ bool MQTT_Publish_Message_Prompt_Mode(const char* topic, const char* payload)
 
 
 /**
- * @brief [最终修正版] 回复云端命令，使用与平台日志完全一致的JSON模板和最可靠的发送方式
+ * @brief [最终修正版 V2] 回复云端命令，改用“单行指令”模式以规避模块固件问题
  * @return bool: true 代表成功，false 代表失败
+ * @note   此版本不再使用“提示符”模式，而是将转义后的JSON直接嵌入AT指令中。
+ *         这解决了在收到+QMTRECV后立即发送数据模式指令会被模块拒绝(返回ERROR)的问题。
  */
 bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* identifier, int code, const char* msg)
 {
     char reply_topic[128];
-    char clean_json_payload[256]; 
+    // --- [核心修改 1] ---
+    // 我们需要一个缓冲区来存放“带C语言转义符”的JSON负载。
+    // 这个缓冲区需要比干净的JSON大一点，以容纳转义符。
+    char escaped_json_payload[512]; 
 
-    // --- [核心修改] ---
-    // 构建一个干净的、不含C语言转义符的JSON字符串。
-    // 这个格式精确匹配了您在成功日志中看到的平台模板。
-    // 我们忽略传入的 msg 参数，对于成功响应(code=200)，直接使用 "success"。
+    // 为了安全，先构建一个干净的、不含转义符的JSON
+    char clean_json_payload[256];
     if (code == 200) {
         snprintf(clean_json_payload, sizeof(clean_json_payload),
-                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"success\"}",
+                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"success\",\"data\":{}}",
                  request_id, code);
     } else {
-        // 对于失败的响应，我们使用传入的 msg
+        // 注意：这里有一个潜在风险，如果msg本身包含 " 或 \，会破坏JSON。
+        // 但对于 "Bad Request" 这种简单消息是安全的。
         snprintf(clean_json_payload, sizeof(clean_json_payload),
-                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"%s\"}",
+                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"%s\",\"data\":{}}",
                  request_id, code, msg);
     }
 
+    // --- [核心修改 2] ---
+    // 手动进行JSON转义：将 " 替换为 \"
+    // 这是因为我们要把这个JSON字符串作为另一个字符串的一部分。
+    int i = 0, j = 0;
+    while (clean_json_payload[i] != '\0' && j < sizeof(escaped_json_payload) - 2) {
+        if (clean_json_payload[i] == '\"') {
+            escaped_json_payload[j++] = '\\';
+            escaped_json_payload[j++] = '\"';
+        } else {
+            escaped_json_payload[j++] = clean_json_payload[i];
+        }
+        i++;
+    }
+    escaped_json_payload[j] = '\0';
 
-    // 根据回复类型构建正确的目标Topic
+
+    // 根据回复类型构建正确的目标Topic (逻辑不变)
     switch (reply_type)
     {
         case REPLY_TO_PROPERTY_SET:
@@ -591,8 +610,15 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
             return false;
     }
 
-    // 调用我们刚刚创建的、最可靠的“数据模式”发送函数
-    return MQTT_Publish_Message_Prompt_Mode(reply_topic, clean_json_payload);
+    // --- [核心修改 3] ---
+    // 构建“单行完整”的 AT+QMTPUB 指令
+    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
+             "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
+             reply_topic, escaped_json_payload);
+
+    // 直接发送这个指令，并等待模块返回 "OK" 或 "+QMTPUB: 0,0,0"
+    // 对于这种短消息，等待 "OK" 通常更快、更可靠。
+    return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000);
 }
 
 
@@ -694,6 +720,8 @@ void Process_MQTT_Message_Robust(const char* buffer)
         printf("DEBUG: Message received, but it has no 'id' field. No reply needed.\r\n");
         return;
     }
+	
+	delay_ms(200); 
 
     // 定义一个布尔变量，用于统一记录回复指令的发送结果
     bool reply_sent_successfully = false;
@@ -709,6 +737,7 @@ void Process_MQTT_Message_Robust(const char* buffer)
         // 尝试解析 crop_stage 参数
         if (find_and_parse_json_int(buffer, "crop_stage", &parsed_value))
         {
+			LED3_TOGGLE;
             g_crop_stage = parsed_value; // 执行命令：更新全局变量
             printf("ACTION: Cloud set 'crop_stage' to %d\r\n", g_crop_stage);
             
@@ -866,7 +895,7 @@ int main(void)
     if (Robust_Initialize_And_Connect_MQTT())
     {
         printf("SUCCESS: MQTT Connected.\r\n");
-        LED1_ON;
+        
 
         if (MQTT_Subscribe_All_Topics())
         {
@@ -944,5 +973,28 @@ int main(void)
             delay_ms(500);
         }
     }
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
