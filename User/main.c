@@ -22,15 +22,15 @@ int g_intervention_status = 0;  // 人工干预状态 (默认为0)
 // --- [新增] 定义一个结构体来统一存储所有设备属性的当前状态 ---
 typedef struct {
     // 温度数据
-    int temp1;
-    int temp2;
-    int temp3;
-    int temp4;
+    float  temp1;
+    float  temp2;
+    float  temp3;
+    float  temp4;
     // 环境数据
-    int ambient_temp;
-    int humidity;
-    int pressure;
-    int wind_speed;
+    float  ambient_temp;
+    float  humidity;
+    float  pressure;
+    float  wind_speed;
     // 系统状态
     int intervention_status;
     // 设备可用性
@@ -468,9 +468,9 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
  */
 bool MQTT_Reply_To_Property_Get_Refactored(const char* request_id, const char* params_str)
 {
-    char data_payload[1024] = {0};
+    char data_payload[4096] = {0};
     char final_json[2048] = {0};
-    char reply_topic[128] = {0};
+    char reply_topic[256] = {0};
 
     // --- 核心逻辑: 安全、高效地动态构建 data 对象 ---
     char* p = data_payload;
@@ -499,18 +499,19 @@ bool MQTT_Reply_To_Property_Get_Refactored(const char* request_id, const char* p
     }
 
     // 使用宏来添加各个属性
-    ADD_PROPERTY("ambient_temp", "%d", g_device_status.ambient_temp);
-    ADD_PROPERTY("humidity", "%d", g_device_status.humidity);
+    ADD_PROPERTY("ambient_temp", "%.1f", g_device_status.ambient_temp);
+    ADD_PROPERTY("humidity", "%.1f", g_device_status.humidity);
     ADD_PROPERTY("crop_stage", "%d", g_device_status.crop_stage);
-    ADD_PROPERTY("wind_speed", "%d", g_device_status.wind_speed);
-    ADD_PROPERTY("temp1", "%d", g_device_status.temp1);
-    ADD_PROPERTY("temp2", "%d", g_device_status.temp2);
-    ADD_PROPERTY("temp3", "%d", g_device_status.temp3);
-    ADD_PROPERTY("temp4", "%d", g_device_status.temp4);
-    ADD_PROPERTY("pressure", "%d", g_device_status.pressure);
+    ADD_PROPERTY("wind_speed", "%.1f", g_device_status.wind_speed);
+    ADD_PROPERTY("temp1", "%.1f", g_device_status.temp1);
+    ADD_PROPERTY("temp2", "%.1f", g_device_status.temp2);
+    ADD_PROPERTY("temp3", "%.1f", g_device_status.temp3);
+    ADD_PROPERTY("temp4", "%.1f", g_device_status.temp4);
+    ADD_PROPERTY("pressure", "%.1f", g_device_status.pressure);
     ADD_PROPERTY("sprinklers_available", "%s", g_device_status.sprinklers_available ? "true" : "false");
     ADD_PROPERTY("fans_available", "%s", g_device_status.fans_available ? "true" : "false");
     ADD_PROPERTY("heaters_available", "%s", g_device_status.heaters_available ? "true" : "false");
+    ADD_PROPERTY("intervention_status", "%d", g_device_status.intervention_status);
 
     // 检查缓冲区是否足够添加最后的 '}'
     if (remaining_len > 1) {
@@ -731,7 +732,8 @@ void Process_MQTT_Message_Robust(const char* buffer)
     else if (strstr(buffer, "/thing/property/get") != NULL)
     {
         printf("DEBUG: Received a 'Property Get' command.\r\n");
-        
+        // 对于“属性获取”命令，我们需要提取 "params" 字段
+        // 该字段是一个数组，里面包含了客户端想要获取的属性名
         // "params" 字段是一个数组，我们直接将其作为字符串处理
         // 我们只需要找到 "params" 的起始位置即可
         char* params_start = strstr(buffer, "\"params\":");
@@ -769,7 +771,7 @@ void Process_MQTT_Message_Robust(const char* buffer)
  * @brief [新增] 仅上报四个温度属性
  * @note  此函数用于分包发送数据，以避免单条AT指令过长导致的问题。
  */
-void MQTT_Publish_Only_Temperatures(int temp1, int temp2, int temp3, int temp4)
+void MQTT_Publish_Only_Temperatures(float temp1, float temp2, float temp3, float temp4)
 {
     // 每次调用都增加消息ID，确保与云端同步
     g_message_id++;
@@ -777,10 +779,10 @@ void MQTT_Publish_Only_Temperatures(int temp1, int temp2, int temp3, int temp4)
     // 1. 构建只包含四个温度属性的 'params' JSON 负载
     sprintf(g_json_payload, 
         "{\"id\":\"%u\",\"version\":\"1.0\",\"params\":{"
-        "\"temp1\":{\"value\":%d},"
-        "\"temp2\":{\"value\":%d},"
-        "\"temp3\":{\"value\":%d},"
-        "\"temp4\":{\"value\":%d}"
+        "\"temp1\":{\"value\":%.1f},"
+        "\"temp2\":{\"value\":%.1f},"
+        "\"temp3\":{\"value\":%.1f},"
+        "\"temp4\":{\"value\":%.1f}"
         "}}",
         g_message_id,
         temp1, temp2, temp3, temp4
@@ -807,7 +809,7 @@ void MQTT_Publish_Only_Temperatures(int temp1, int temp2, int temp3, int temp4)
  * @brief [新增] 仅上报环境相关的四个属性 (温度、湿度、气压、风速)
  * @note  此函数用于分包发送数据，严格遵循已被验证可行的手动拼接AT指令模式。
  */
-void MQTT_Publish_Environment_Data(int ambient_temp, int humidity, int pressure, int wind_speed)
+void MQTT_Publish_Environment_Data(float ambient_temp, float humidity, float pressure, float wind_speed)
 {
     // 每次调用都增加消息ID
     g_message_id++;
@@ -816,10 +818,10 @@ void MQTT_Publish_Environment_Data(int ambient_temp, int humidity, int pressure,
     //    严格按照要求，仅使用 \" 进行转义
     snprintf(g_json_payload, JSON_PAYLOAD_SIZE, 
         "{\"id\":\"%u\",\"version\":\"1.0\",\"params\":{"
-        "\"ambient_temp\":{\"value\":%d},"
-        "\"humidity\":{\"value\":%d},"
-        "\"pressure\":{\"value\":%d},"
-        "\"wind_speed\":{\"value\":%d}"
+        "\"ambient_temp\":{\"value\":%.1f},"
+        "\"humidity\":{\"value\":%.1f},"
+        "\"pressure\":{\"value\":%.1f},"
+        "\"wind_speed\":{\"value\":%.1f}"
         "}}",
         g_message_id,
         ambient_temp, humidity, pressure, wind_speed
@@ -962,9 +964,9 @@ void MQTT_Publish_Devices_Availability(bool sprinklers_available, bool fans_avai
  */
 void MQTT_Publish_All_Data(
     // 温度数据
-    int temp1, int temp2, int temp3, int temp4,
+    float temp1, float temp2, float temp3, float temp4,
     // 环境数据
-    int ambient_temp, int humidity, int pressure, int wind_speed,
+    float ambient_temp, float humidity, float pressure, float wind_speed,
     // 系统状态
     int intervention_status,
     // 设备可用性
