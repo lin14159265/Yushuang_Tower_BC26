@@ -460,103 +460,68 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
 
 
 /**
- * @brief [新增] 回复云端的“属性获取”请求
+ * @brief [优化后] 回复云端的“属性获取”请求
  * @param request_id 从请求中解析出的消息ID
  * @param params_str 从请求中解析出的 params 数组部分的字符串
  * @return bool: true 代表回复发送成功, false 代表失败
- * @note  此函数会动态构建 data JSON 对象。
+ * @note  此函数安全地动态构建 data JSON 对象，防止缓冲区溢出。
  */
-bool MQTT_Reply_To_Property_Get(const char* request_id, const char* params_str)
+bool MQTT_Reply_To_Property_Get_Refactored(const char* request_id, const char* params_str)
 {
-    char data_payload[1024] = {0}; // 用于动态构建 "data":{...} 内部的内容
+    char data_payload[1024] = {0};
     char final_json[2048] = {0};
     char reply_topic[128] = {0};
-    bool first_param = true; // 用于处理逗号
 
-    // --- 核心逻辑: 动态构建 data 对象 ---
-    strcat(data_payload, "{");
+    // --- 核心逻辑: 安全、高效地动态构建 data 对象 ---
+    char* p = data_payload;
+    size_t remaining_len = sizeof(data_payload);
+    int written_len = 0;
+    bool first_item_added = false; // 用于控制逗号
 
-    // 检查并添加环境温度
-    if (strstr(params_str, "\"ambient_temp\"") != NULL) {
-        sprintf(data_payload + strlen(data_payload), "\"ambient_temp\":%d", g_device_status.ambient_temp);
-        first_param = false;
-    }
-    // 检查并添加湿度
-    if (strstr(params_str, "\"humidity\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"humidity\":%d", g_device_status.humidity);
-        first_param = false;
-    }
-    // 检查并添加作物阶段
-    if (strstr(params_str, "\"crop_stage\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"crop_stage\":%d", g_device_status.crop_stage);
-        first_param = false;
-    }
-    // 检查并添加风速
-    if (strstr(params_str, "\"wind_speed\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"wind_speed\":%d", g_device_status.wind_speed);
-        first_param = false;
-    }
-    // 检查并添加洒水器可用性
-    if (strstr(params_str, "\"sprinklers_available\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"sprinklers_available\":%s", g_device_status.sprinklers_available ? "true" : "false");
-        first_param = false;
-    }
-    // 检查并添加温度1
-    if (strstr(params_str, "\"temp1\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"temp1\":%d", g_device_status.temp1);
-        first_param = false;
-    }
-    // 检查并添加温度2
-    if (strstr(params_str, "\"temp2\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"temp2\":%d", g_device_status.temp2);
-        first_param = false;
-    }
-    // 检查并添加温度3
-    if (strstr(params_str, "\"temp3\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"temp3\":%d", g_device_status.temp3);
-        first_param = false;
-    }
-    // 检查并添加温度4
-    if (strstr(params_str, "\"temp4\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"temp4\":%d", g_device_status.temp4);
-        first_param = false;
-    }
-    // 检查并添加气压
-    if (strstr(params_str, "\"pressure\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"pressure\":%d", g_device_status.pressure);
-        first_param = false;
-    }
-    // 检查并添加洒水器可用性
-    if (strstr(params_str, "\"sprinklers_available\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"sprinklers_available\":%s", g_device_status.sprinklers_available ? "true" : "false");
-        first_param = false;
-    }
-    // 检查并添加风扇可用性
-    if (strstr(params_str, "\"fans_available\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"fans_available\":%s", g_device_status.fans_available ? "true" : "false");
-        first_param = false;
-    }
-    // 检查并添加加热器可用性
-    if (strstr(params_str, "\"heaters_available\"") != NULL) {
-        if (!first_param) strcat(data_payload, ",");
-        sprintf(data_payload + strlen(data_payload), "\"heaters_available\":%s", g_device_status.heaters_available ? "true" : "false");
-        first_param = false;
+    // 写入起始的 '{'
+    written_len = snprintf(p, remaining_len, "{");
+    p += written_len;
+    remaining_len -= written_len;
+
+    // 宏定义一个帮助函数，减少重复代码
+    // __VA_ARGS__ 用于处理可变参数，比如 g_device_status.ambient_temp
+    #define ADD_PROPERTY(param_name, format, ...) \
+    if (remaining_len > 1 && strstr(params_str, "\"" param_name "\"") != NULL) { \
+        if (first_item_added) { \
+            written_len = snprintf(p, remaining_len, ","); \
+            p += written_len; \
+            remaining_len -= written_len; \
+        } \
+        written_len = snprintf(p, remaining_len, "\"" param_name "\":" format, __VA_ARGS__); \
+        p += written_len; \
+        remaining_len -= written_len; \
+        first_item_added = true; \
     }
 
+    // 使用宏来添加各个属性
+    ADD_PROPERTY("ambient_temp", "%d", g_device_status.ambient_temp);
+    ADD_PROPERTY("humidity", "%d", g_device_status.humidity);
+    ADD_PROPERTY("crop_stage", "%d", g_device_status.crop_stage);
+    ADD_PROPERTY("wind_speed", "%d", g_device_status.wind_speed);
+    ADD_PROPERTY("temp1", "%d", g_device_status.temp1);
+    ADD_PROPERTY("temp2", "%d", g_device_status.temp2);
+    ADD_PROPERTY("temp3", "%d", g_device_status.temp3);
+    ADD_PROPERTY("temp4", "%d", g_device_status.temp4);
+    ADD_PROPERTY("pressure", "%d", g_device_status.pressure);
+    ADD_PROPERTY("sprinklers_available", "%s", g_device_status.sprinklers_available ? "true" : "false");
+    ADD_PROPERTY("fans_available", "%s", g_device_status.fans_available ? "true" : "false");
+    ADD_PROPERTY("heaters_available", "%s", g_device_status.heaters_available ? "true" : "false");
 
-
-    strcat(data_payload, "}"); // 封闭 data 对象
+    // 检查缓冲区是否足够添加最后的 '}'
+    if (remaining_len > 1) {
+        snprintf(p, remaining_len, "}");
+    } else {
+        // 缓冲区已满，可能无法添加 '}'，这是一个错误情况
+        // 可以在这里添加日志或错误处理
+        // 为确保JSON格式正确，强制在末尾添加 '}'
+        data_payload[sizeof(data_payload) - 2] = '}';
+        data_payload[sizeof(data_payload) - 1] = '\0';
+    }
 
     // --- 构建完整的回复JSON ---
     snprintf(final_json, sizeof(final_json),
@@ -570,11 +535,12 @@ bool MQTT_Reply_To_Property_Get(const char* request_id, const char* params_str)
         MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
 
     // --- 构建并发送AT指令 ---
-    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
+    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE,
              "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
              reply_topic, final_json);
 
     return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000);
+
 }
 
 
@@ -772,7 +738,7 @@ void Process_MQTT_Message_Robust(const char* buffer)
         if (params_start != NULL)
         {
             // 调用新的专用回复函数
-            reply_sent_successfully = MQTT_Reply_To_Property_Get(request_id, params_start);
+            reply_sent_successfully = MQTT_Reply_To_Property_Get_Refactored(request_id, params_start);
         }
         else
         {
