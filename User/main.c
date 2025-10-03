@@ -493,14 +493,67 @@ bool MQTT_Reply_To_Property_Get(const char* request_id, const char* params_str)
         sprintf(data_payload + strlen(data_payload), "\"crop_stage\":%d", g_device_status.crop_stage);
         first_param = false;
     }
-    
-    // ... 在这里可以添加对所有其他属性的检查 ...
-    // 例如: temp1, wind_speed, sprinklers_available (注意布尔值要发true/false)
+    // 检查并添加风速
+    if (strstr(params_str, "\"wind_speed\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"wind_speed\":%d", g_device_status.wind_speed);
+        first_param = false;
+    }
+    // 检查并添加洒水器可用性
     if (strstr(params_str, "\"sprinklers_available\"") != NULL) {
         if (!first_param) strcat(data_payload, ",");
         sprintf(data_payload + strlen(data_payload), "\"sprinklers_available\":%s", g_device_status.sprinklers_available ? "true" : "false");
         first_param = false;
     }
+    // 检查并添加温度1
+    if (strstr(params_str, "\"temp1\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"temp1\":%d", g_device_status.temp1);
+        first_param = false;
+    }
+    // 检查并添加温度2
+    if (strstr(params_str, "\"temp2\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"temp2\":%d", g_device_status.temp2);
+        first_param = false;
+    }
+    // 检查并添加温度3
+    if (strstr(params_str, "\"temp3\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"temp3\":%d", g_device_status.temp3);
+        first_param = false;
+    }
+    // 检查并添加温度4
+    if (strstr(params_str, "\"temp4\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"temp4\":%d", g_device_status.temp4);
+        first_param = false;
+    }
+    // 检查并添加气压
+    if (strstr(params_str, "\"pressure\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"pressure\":%d", g_device_status.pressure);
+        first_param = false;
+    }
+    // 检查并添加洒水器可用性
+    if (strstr(params_str, "\"sprinklers_available\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"sprinklers_available\":%s", g_device_status.sprinklers_available ? "true" : "false");
+        first_param = false;
+    }
+    // 检查并添加风扇可用性
+    if (strstr(params_str, "\"fans_available\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"fans_available\":%s", g_device_status.fans_available ? "true" : "false");
+        first_param = false;
+    }
+    // 检查并添加加热器可用性
+    if (strstr(params_str, "\"heaters_available\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"heaters_available\":%s", g_device_status.heaters_available ? "true" : "false");
+        first_param = false;
+    }
+
 
 
     strcat(data_payload, "}"); // 封闭 data 对象
@@ -1010,7 +1063,7 @@ int main(void)
             MQTT_Get_Desired_Crop_Stage();
             
             u64 last_report_time = 0;
-            const uint32_t report_interval_ms = 5000;
+            const uint32_t report_interval_ms = 15000;
 
             // --- [核心修改：增加用于空闲检测的变量] ---
             unsigned int last_recv_num = 0;
