@@ -19,6 +19,32 @@ int g_crop_stage = 0;           // 作物生长时期 (默认为0)
 int g_intervention_status = 0;  // 人工干预状态 (默认为0)
 
 
+// --- [新增] 定义一个结构体来统一存储所有设备属性的当前状态 ---
+typedef struct {
+    // 温度数据
+    int temp1;
+    int temp2;
+    int temp3;
+    int temp4;
+    // 环境数据
+    int ambient_temp;
+    int humidity;
+    int pressure;
+    int wind_speed;
+    // 系统状态
+    int intervention_status;
+    // 设备可用性
+    bool sprinklers_available;
+    bool fans_available;
+    bool heaters_available;
+    // 作物生长阶段
+    int crop_stage;
+} DeviceStatus;
+
+// --- [新增] 创建该结构体的全局实例，并初始化 ---
+DeviceStatus g_device_status = {0};
+
+
 typedef enum {
     REPLY_TO_PROPERTY_SET,
     REPLY_TO_SERVICE_INVOKE
@@ -264,6 +290,20 @@ bool MQTT_Subscribe_Service_Invoke_Topic(void)
     return MQTT_Send_AT_Command(g_cmd_buffer, "+QMTSUB: 0,1,0", 3000);
 }
 
+/**
+ * @brief [新增] 订阅“属性获取”的主题，并等待确认
+ * @return bool: true 代表订阅成功, false 代表失败
+ */
+bool MQTT_Subscribe_Property_Get_Topic(void)
+{
+    // Topic: $sys/{product_id}/{device_name}/thing/property/get
+    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/thing/property/get\",1\r\n", 
+            MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
+
+    // 发送指令并等待模块返回 "+QMTSUB: 0,1,0" 表示成功
+    return MQTT_Send_AT_Command(g_cmd_buffer, "+QMTSUB: 0,1,0", 3000);
+}
+
 
 /**
  * @brief [健壮版] 一次性订阅所有需要接收消息的主题，并检查每一步的结果
@@ -285,6 +325,11 @@ bool MQTT_Subscribe_All_Topics(void)
     
     if (!MQTT_Subscribe_Service_Invoke_Topic()) {
         printf("ERROR: Failed to subscribe to Service Invoke Topic.\r\n");
+        return false;
+    }
+
+    if (!MQTT_Subscribe_Property_Get_Topic()) {
+        printf("ERROR: Failed to subscribe to Property Get Topic.\r\n");
         return false;
     }
     
@@ -408,6 +453,81 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
     // 4. 直接发送这个指令，并等待模块返回 "OK"
     return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000);
 }
+
+
+
+
+
+
+/**
+ * @brief [新增] 回复云端的“属性获取”请求
+ * @param request_id 从请求中解析出的消息ID
+ * @param params_str 从请求中解析出的 params 数组部分的字符串
+ * @return bool: true 代表回复发送成功, false 代表失败
+ * @note  此函数会动态构建 data JSON 对象。
+ */
+bool MQTT_Reply_To_Property_Get(const char* request_id, const char* params_str)
+{
+    char data_payload[1024] = {0}; // 用于动态构建 "data":{...} 内部的内容
+    char final_json[2048] = {0};
+    char reply_topic[128] = {0};
+    bool first_param = true; // 用于处理逗号
+
+    // --- 核心逻辑: 动态构建 data 对象 ---
+    strcat(data_payload, "{");
+
+    // 检查并添加环境温度
+    if (strstr(params_str, "\"ambient_temp\"") != NULL) {
+        sprintf(data_payload + strlen(data_payload), "\"ambient_temp\":%d", g_device_status.ambient_temp);
+        first_param = false;
+    }
+    // 检查并添加湿度
+    if (strstr(params_str, "\"humidity\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"humidity\":%d", g_device_status.humidity);
+        first_param = false;
+    }
+    // 检查并添加作物阶段
+    if (strstr(params_str, "\"crop_stage\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"crop_stage\":%d", g_device_status.crop_stage);
+        first_param = false;
+    }
+    
+    // ... 在这里可以添加对所有其他属性的检查 ...
+    // 例如: temp1, wind_speed, sprinklers_available (注意布尔值要发true/false)
+    if (strstr(params_str, "\"sprinklers_available\"") != NULL) {
+        if (!first_param) strcat(data_payload, ",");
+        sprintf(data_payload + strlen(data_payload), "\"sprinklers_available\":%s", g_device_status.sprinklers_available ? "true" : "false");
+        first_param = false;
+    }
+
+
+    strcat(data_payload, "}"); // 封闭 data 对象
+
+    // --- 构建完整的回复JSON ---
+    snprintf(final_json, sizeof(final_json),
+        "{\"id\":\"%s\",\"code\":200,\"msg\":\"success\",\"data\":%s}",
+        request_id,
+        data_payload);
+
+    // --- 构建回复Topic ---
+    snprintf(reply_topic, sizeof(reply_topic),
+        "$sys/%s/%s/thing/property/get_reply",
+        MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
+
+    // --- 构建并发送AT指令 ---
+    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
+             "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
+             reply_topic, final_json);
+
+    return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000);
+}
+
+
+
+
+
 
 
 
@@ -585,6 +705,28 @@ void Process_MQTT_Message_Robust(const char* buffer)
             // 尝试发送“请求错误”的回复，并记录结果
             // 注意：因为没有method，所以第二个参数传 "null" 或者一个空字符串
             reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, "unknown", 400, "Bad Request");
+        }
+    }
+
+    // 3. --- [新增] 是不是“属性获取”命令？ ---
+    else if (strstr(buffer, "/thing/property/get") != NULL)
+    {
+        printf("DEBUG: Received a 'Property Get' command.\r\n");
+        
+        // "params" 字段是一个数组，我们直接将其作为字符串处理
+        // 我们只需要找到 "params" 的起始位置即可
+        char* params_start = strstr(buffer, "\"params\":");
+        if (params_start != NULL)
+        {
+            // 调用新的专用回复函数
+            reply_sent_successfully = MQTT_Reply_To_Property_Get(request_id, params_start);
+        }
+        else
+        {
+            // 如果没有 "params" 字段，这是一个无效的请求
+            printf("WARN: 'params' array not found in Property Get command.\r\n");
+            // (此处也可以选择发送一个 code:400 的错误回复)
+            reply_sent_successfully = false; 
         }
     }
     else
@@ -906,35 +1048,41 @@ int main(void)
                     }
                 }
                 
-                // --- 任务2: 周期性上报数据 (不变) ---
+                // --- 任务2: [核心修改] 周期性上报数据 ---
                 if (System_GetTimeMs() - last_report_time > report_interval_ms)
-                {                   
+                {
+                    // --- 步骤1: 模拟传感器读数并【更新】全局状态结构体 ---
+                    
                     // 模拟环境数据
-                    int sim_ambient_temp = 15 + (rand() % 16); // 环境温度: 15-30
-                    int sim_humidity     = 40 + (rand() % 41); // 湿度: 40-80%
-                    int sim_pressure     = 990 + (rand() % 41);// 气压: 990-1030 hPa
-                    int sim_wind_speed   = rand() % 11;         // 风速: 0-10 m/s
+                    g_device_status.ambient_temp = 15 + (rand() % 16);
+                    g_device_status.humidity     = 40 + (rand() % 41);
+                    g_device_status.pressure     = 990 + (rand() % 41);
+                    g_device_status.wind_speed   = rand() % 11;
 
                     // 模拟监测点温度
                     int base_temp = 15 + (rand() % 11); 
-                    int sim_temp1 = base_temp + (rand() % 5) - 2; 
-                    int sim_temp2 = base_temp + (rand() % 5) - 2;
-                    int sim_temp3 = base_temp + (rand() % 5) - 2;
-                    int sim_temp4 = base_temp + (rand() % 5) - 2;
+                    g_device_status.temp1 = base_temp + (rand() % 5) - 2; 
+                    g_device_status.temp2 = base_temp + (rand() % 5) - 2;
+                    g_device_status.temp3 = base_temp + (rand() % 5) - 2;
+                    g_device_status.temp4 = base_temp + (rand() % 5) - 2;
 
-                    // 模拟状态和可用性 (您可以根据实际情况修改)
-                    int  sim_intervention_status = g_intervention_status; // 使用从云端获取的全局状态
-                    bool sim_sprinklers_ok = true;
-                    bool sim_fans_ok = true;
-                    bool sim_heaters_ok = false; // 假设加热器故障
+                    // 从全局变量同步状态
+                    g_device_status.intervention_status = g_intervention_status;
+                    g_device_status.crop_stage = g_crop_stage;
+                    
+                    // 模拟设备可用性
+                    g_device_status.sprinklers_available = true;
+                    g_device_status.fans_available = true;
+                    g_device_status.heaters_available = false;
 
-                    // --- 只需调用这一个函数，传入所有准备好的数据 ---
+                    // --- 步骤2: 从全局状态结构体中取值，调用统一上报函数 ---
                     MQTT_Publish_All_Data(
-                        sim_temp1, sim_temp2, sim_temp3, sim_temp4,
-                        sim_ambient_temp, sim_humidity, sim_pressure, sim_wind_speed,
-                        sim_intervention_status,
-                        sim_sprinklers_ok, sim_fans_ok, sim_heaters_ok
+                        g_device_status.temp1, g_device_status.temp2, g_device_status.temp3, g_device_status.temp4,
+                        g_device_status.ambient_temp, g_device_status.humidity, g_device_status.pressure, g_device_status.wind_speed,
+                        g_device_status.intervention_status,
+                        g_device_status.sprinklers_available, g_device_status.fans_available, g_device_status.heaters_available
                     );
+
                     last_report_time = System_GetTimeMs();
                 }
             }
