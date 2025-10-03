@@ -750,6 +750,28 @@ void Process_MQTT_Message_Robust(const char* buffer)
             reply_sent_successfully = false; 
         }
     }
+    // 4. --- [新增] 是不是“期望属性获取回复”消息？ ---
+    else if (strstr(buffer, "/thing/property/desired/get/reply") != NULL)
+    {
+        printf("DEBUG: Received a 'Desired Property Get Reply'.\r\n");
+        int parsed_value;
+
+        // 尝试从回复的 data 对象中解析 crop_stage 的值
+        if (find_and_parse_json_int(buffer, "crop_stage", &parsed_value))
+        {
+            // 解析成功，立即更新本地状态
+            g_crop_stage = parsed_value;
+            g_device_status.crop_stage = parsed_value;
+            printf("ACTION: Synchronized 'crop_stage' from cloud, new value is %d\r\n\r\n", g_crop_stage);
+        }
+        else
+        {
+            printf("WARN: 'crop_stage' not found in the desired property reply.\r\n\r\n");
+        }
+        // 这是一个回复消息，我们不需要再回复它，所以直接返回
+        return;
+    }
+
     else
     {
         // 如果收到的消息包含了 "id"，但 Topic 既不是 property/set 也不是 service/invoke
@@ -1030,6 +1052,7 @@ int main(void)
             
             MQTT_Get_Desired_Crop_Stage();
             
+            
             u64 last_report_time = 0;
             const uint32_t report_interval_ms = 15000;
 
@@ -1072,37 +1095,7 @@ int main(void)
                 // --- 任务2: [核心修改] 周期性上报数据 ---
                 if (System_GetTimeMs() - last_report_time > report_interval_ms)
                 {
-                    // --- 步骤1: 模拟传感器读数并【更新】全局状态结构体 ---
-                    
-                    // 模拟环境数据
-                    g_device_status.ambient_temp = 15 + (rand() % 16);
-                    g_device_status.humidity     = 40 + (rand() % 41);
-                    g_device_status.pressure     = 990 + (rand() % 41);
-                    g_device_status.wind_speed   = rand() % 11;
-
-                    // 模拟监测点温度
-                    int base_temp = 15 + (rand() % 11); 
-                    g_device_status.temp1 = base_temp + (rand() % 5) - 2; 
-                    g_device_status.temp2 = base_temp + (rand() % 5) - 2;
-                    g_device_status.temp3 = base_temp + (rand() % 5) - 2;
-                    g_device_status.temp4 = base_temp + (rand() % 5) - 2;
-
-                    // 从全局变量同步状态
-                    g_device_status.intervention_status = g_intervention_status;
-                    g_device_status.crop_stage = g_crop_stage;
-                    
-                    // 模拟设备可用性
-                    g_device_status.sprinklers_available = true;
-                    g_device_status.fans_available = true;
-                    g_device_status.heaters_available = false;
-
-                    // --- 步骤2: 从全局状态结构体中取值，调用统一上报函数 ---
-                    MQTT_Publish_All_Data(
-                        g_device_status.temp1, g_device_status.temp2, g_device_status.temp3, g_device_status.temp4,
-                        g_device_status.ambient_temp, g_device_status.humidity, g_device_status.pressure, g_device_status.wind_speed,
-                        g_device_status.intervention_status,
-                        g_device_status.sprinklers_available, g_device_status.fans_available, g_device_status.heaters_available
-                    );
+                    printf("%d", g_device_status.crop_stage);
 
                     last_report_time = System_GetTimeMs();
                 }
