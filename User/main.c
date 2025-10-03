@@ -788,41 +788,48 @@ void MQTT_Publish_Intervention_Status(int intervention_status)
 
 
 /**
- * @brief [新] 仅上报三个系统（喷淋、风机、加热器）的可用性
+ * @brief [最终修正版-基于成功日志] 上报三个系统的可用性
  * @param sprinklers_available 喷淋系统是否可用
  * @param fans_available 风机系统是否可用
  * @param heaters_available 加热系统是否可用
- * @note  此函数用于分包发送数据，严格遵循手动拼接AT指令模式。
+ * @note  严格遵照成功日志格式，发送无引号的JSON布尔值 (true/false)。
  */
 void MQTT_Publish_Devices_Availability(bool sprinklers_available, bool fans_available, bool heaters_available)
 {
-    // 根据平台要求，将布尔值转换为字符串 "true" 或 "false"
-    const char* str_sprinklers = sprinklers_available ? "true" : "false";
-    const char* str_fans = fans_available ? "true" : "false";
-    const char* str_heaters = heaters_available ? "true" : "false"; 
+    // --- [核心修改 1] ---
+    // 准备要填充的字符串字面量，它们是 JSON 的布尔关键字
+    const char* val_sprinklers = sprinklers_available ? "true" : "false";
+    const char* val_fans = fans_available ? "true" : "false";
+    const char* val_heaters = heaters_available ? "true" : "false";
     
     // 每次调用都增加消息ID
     g_message_id++;
 
-    // 1. 构建包含三个可用性属性的 'params' JSON 负载
-    //    注意：根据之前的分析，平台需要的是字符串，所以用 \"%s\"
+    // --- [核心修改 2] ---
+    // 构建 JSON 负载。
+    // 注意观察下面的格式：{\"value\":%s}
+    // %s 的两边【没有】加转义引号 \"。
+    // 这样填充后就会变成 {"value":true} 或 {"value":false}，与截图一致。
     int json_len = snprintf(g_json_payload, JSON_PAYLOAD_SIZE, 
         "{\"id\":\"%u\",\"version\":\"1.0\",\"params\":{"
-        "\"sprinklers_available\":{\"value\":\"%s\"},"
-        "\"fans_available\":{\"value\":\"%s\"},"
-        "\"heaters_available\":{\"value\":\"%s\"}"
+        "\"sprinklers_available\":{\"value\":%s},"
+        "\"fans_available\":{\"value\":%s},"
+        "\"heaters_available\":{\"value\":%s}"
         "}}",
         g_message_id,
-        str_sprinklers, str_fans, str_heaters
+        val_sprinklers, val_fans, val_heaters
     );
 
-    // [健壮性检查] 确认JSON没有因为缓冲区太小而被截断
+    // [健壮性检查]
     if (json_len < 0 || json_len >= JSON_PAYLOAD_SIZE) {
-        USART1_SendString("ERROR: Devices availability JSON buffer overflow!\r\n");
+        printf("ERROR: Devices availability JSON buffer overflow!\r\n");
         return;
     }
 
-    // 2. 构建 AT+QMTPUB 指令
+    // 打印生成的Payload供调试查看，确保格式为 {"value":false}
+    printf("DEBUG: Generated Payload: %s\r\n", g_json_payload);
+
+    // 2. 构建 AT+QMTPUB 指令 (保持不变)
     snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
             "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/thing/property/post\",\"%s\"\r\n",
             MQTT_PRODUCT_ID, 
@@ -833,7 +840,7 @@ void MQTT_Publish_Devices_Availability(bool sprinklers_available, bool fans_avai
     USART1_SendString(g_cmd_buffer);
 
     // 4. 等待模块处理和发送
-    delay_ms(1500); // 这是一个中等长度的报文，延时1.5秒
+    delay_ms(1500); 
 }
 
 
@@ -914,10 +921,10 @@ int main(void)
                 if (System_GetTimeMs() - last_report_time > report_interval_ms)
                 {
                     printf("INFO: It's time to report sensor data.\r\n");
-                    MQTT_Publish_Environment_Data_Random();
-                    MQTT_Publish_Temperatures_Random();
-                    MQTT_Publish_Intervention_Status(1);
-                    MQTT_Publish_Devices_Availability(false, false, false);
+                    //MQTT_Publish_Environment_Data_Random();
+                    //MQTT_Publish_Temperatures_Random();
+                    //MQTT_Publish_Intervention_Status(1);
+                    MQTT_Publish_Devices_Availability(true, false, true);
 
                     delay_ms(500); // 短暂延时，避免发送过快
                     last_report_time = System_GetTimeMs();
