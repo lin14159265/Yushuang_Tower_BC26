@@ -455,93 +455,92 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
 }
 
 
-
-
-
-
 /**
- * @brief [优化后] 回复云端的“属性获取”请求
+ * @brief [健壮版] 回复云端的“属性获取”请求，支持自动分包发送
  * @param request_id 从请求中解析出的消息ID
  * @param params_str 从请求中解析出的 params 数组部分的字符串
- * @return bool: true 代表回复发送成功, false 代表失败
- * @note  此函数安全地动态构建 data JSON 对象，防止缓冲区溢出。
+ * @return bool: 只要有至少一个包发送成功，就返回 true
+ * @note  此函数将所有属性分为多个组，独立构建JSON并发送，以避免AT指令超长。
  */
 bool MQTT_Reply_To_Property_Get_Refactored(const char* request_id, const char* params_str)
 {
-    char data_payload[4096] = {0};
-    char final_json[2048] = {0};
+    char data_payload[1024] = {0}; // 用于动态构建 "data":{...} 内部的内容
+    char final_json[4096] = {0};
     char reply_topic[256] = {0};
+    bool success_flag = false; // 记录是否至少有一个包成功
 
-    // --- 核心逻辑: 安全、高效地动态构建 data 对象 ---
-    char* p = data_payload;
-    size_t remaining_len = sizeof(data_payload);
-    int written_len = 0;
-    bool first_item_added = false; // 用于控制逗号
-
-    // 写入起始的 '{'
-    written_len = snprintf(p, remaining_len, "{");
-    p += written_len;
-    remaining_len -= written_len;
-
-    // 宏定义一个帮助函数，减少重复代码
-    // __VA_ARGS__ 用于处理可变参数，比如 g_device_status.ambient_temp
-    #define ADD_PROPERTY(param_name, format, ...) \
-    if (remaining_len > 1 && strstr(params_str, "\"" param_name "\"") != NULL) { \
-        if (first_item_added) { \
-            written_len = snprintf(p, remaining_len, ","); \
-            p += written_len; \
-            remaining_len -= written_len; \
-        } \
-        written_len = snprintf(p, remaining_len, "\"" param_name "\":" format, __VA_ARGS__); \
-        p += written_len; \
-        remaining_len -= written_len; \
-        first_item_added = true; \
-    }
-
-    // 使用宏来添加各个属性
-    ADD_PROPERTY("ambient_temp", "%.1f", g_device_status.ambient_temp);
-    ADD_PROPERTY("humidity", "%.1f", g_device_status.humidity);
-    ADD_PROPERTY("crop_stage", "%d", g_device_status.crop_stage);
-    ADD_PROPERTY("wind_speed", "%.1f", g_device_status.wind_speed);
-    ADD_PROPERTY("temp1", "%.1f", g_device_status.temp1);
-    ADD_PROPERTY("temp2", "%.1f", g_device_status.temp2);
-    ADD_PROPERTY("temp3", "%.1f", g_device_status.temp3);
-    ADD_PROPERTY("temp4", "%.1f", g_device_status.temp4);
-    ADD_PROPERTY("pressure", "%.1f", g_device_status.pressure);
-    ADD_PROPERTY("sprinklers_available", "%s", g_device_status.sprinklers_available ? "true" : "false");
-    ADD_PROPERTY("fans_available", "%s", g_device_status.fans_available ? "true" : "false");
-    ADD_PROPERTY("heaters_available", "%s", g_device_status.heaters_available ? "true" : "false");
-    ADD_PROPERTY("intervention_status", "%d", g_device_status.intervention_status);
-
-    // 检查缓冲区是否足够添加最后的 '}'
-    if (remaining_len > 1) {
-        snprintf(p, remaining_len, "}");
-    } else {
-        // 缓冲区已满，可能无法添加 '}'，这是一个错误情况
-        // 可以在这里添加日志或错误处理
-        // 为确保JSON格式正确，强制在末尾添加 '}'
-        data_payload[sizeof(data_payload) - 2] = '}';
-        data_payload[sizeof(data_payload) - 1] = '\0';
-    }
-
-    // --- 构建完整的回复JSON ---
-    snprintf(final_json, sizeof(final_json),
-        "{\"id\":\"%s\",\"code\":200,\"msg\":\"success\",\"data\":%s}",
-        request_id,
-        data_payload);
-
-    // --- 构建回复Topic ---
+    // --- 构建固定的回复Topic ---
     snprintf(reply_topic, sizeof(reply_topic),
         "$sys/%s/%s/thing/property/get_reply",
         MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
 
-    // --- 构建并发送AT指令 ---
-    snprintf(g_cmd_buffer, CMD_BUFFER_SIZE,
-             "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
-             reply_topic, final_json);
+    // --- 第1包：回复环境相关的属性 ---
+    // 检查请求中是否包含任何一个环境属性
+    if (strstr(params_str, "ambient_temp") || strstr(params_str, "humidity") || 
+        strstr(params_str, "pressure") || strstr(params_str, "wind_speed"))
+    {
+        printf("INFO: Replying with environment data pack...\r\n");
+        // 构建data对象
+        snprintf(data_payload, sizeof(data_payload), 
+            "{\"ambient_temp\":%d,\"humidity\":%d,\"pressure\":%d,\"wind_speed\":%d}",
+            g_device_status.ambient_temp, g_device_status.humidity,
+            g_device_status.pressure, g_device_status.wind_speed);
+        
+        // 构建完整JSON
+        snprintf(final_json, sizeof(final_json),
+            "{\"id\":\"%s\",\"code\":200,\"msg\":\"success\",\"data\":%s}",
+            request_id, data_payload);
 
-    return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000);
+        // 构建并发送AT指令
+        snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n", reply_topic, final_json);
+        if (MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000)) {
+            success_flag = true;
+        }
+        delay_ms(300); // 发送完一包后，短暂延时，给模块处理时间
+    }
 
+    // --- 第2包：回复4个监测点温度 ---
+    if (strstr(params_str, "temp1") || strstr(params_str, "temp2") || 
+        strstr(params_str, "temp3") || strstr(params_str, "temp4"))
+    {
+        printf("INFO: Replying with temperatures pack...\r\n");
+        snprintf(data_payload, sizeof(data_payload), 
+            "{\"temp1\":%d,\"temp2\":%d,\"temp3\":%d,\"temp4\":%d}",
+            g_device_status.temp1, g_device_status.temp2, g_device_status.temp3, g_device_status.temp4);
+        
+        snprintf(final_json, sizeof(final_json),
+            "{\"id\":\"%s\",\"code\":200,\"msg\":\"success\",\"data\":%s}",
+            request_id, data_payload);
+
+        snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n", reply_topic, final_json);
+        if (MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000)) {
+            success_flag = true;
+        }
+        delay_ms(300);
+    }
+
+    // --- 第3包：回复系统状态和设备可用性 ---
+    if (strstr(params_str, "available") || strstr(params_str, "status") || strstr(params_str, "stage"))
+    {
+        printf("INFO: Replying with status & availability pack...\r\n");
+        snprintf(data_payload, sizeof(data_payload), 
+            "{\"crop_stage\":%d,\"intervention_status\":%d,\"sprinklers_available\":%s,\"fans_available\":%s,\"heaters_available\":%s}",
+            g_device_status.crop_stage, g_device_status.intervention_status,
+            g_device_status.sprinklers_available ? "true" : "false",
+            g_device_status.fans_available ? "true" : "false",
+            g_device_status.heaters_available ? "true" : "false");
+
+        snprintf(final_json, sizeof(final_json),
+            "{\"id\":\"%s\",\"code\":200,\"msg\":\"success\",\"data\":%s}",
+            request_id, data_payload);
+
+        snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n", reply_topic, final_json);
+        if (MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000)) {
+            success_flag = true;
+        }
+    }
+
+    return success_flag;
 }
 
 
@@ -550,7 +549,17 @@ bool MQTT_Reply_To_Property_Get_Refactored(const char* request_id, const char* p
 
 
 
-
+/**
+ * @brief 从一个JSON格式的字符串中查找指定的键(key)，并解析其对应的字符串值。
+ * @param buffer: 包含JSON内容的字符串。
+ * @param key:    要查找的JSON键名。
+ * @param result: 如果解析成功，字符串值将被存放在这个缓冲区中。
+ * @param max_len: 结果缓冲区的最大长度，用于防止缓冲区溢出。
+ * @return int:   如果成功找到并解析了字符串，返回1；否则返回0。
+ * @note   这是一个不依赖任何JSON库的安全解析实现。
+ *         它能处理键和值周围的空格，并能确保字符串值的合法性。
+ *         该函数专门用于提取JSON中的字符串类型值，会自动处理字符串前后的引号。
+ */
 int find_and_parse_json_string(const char* buffer, const char* key, char* result, int max_len)
 {
     char search_key[64];
