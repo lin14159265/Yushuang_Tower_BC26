@@ -349,50 +349,35 @@ bool MQTT_Publish_Message_Prompt_Mode(const char* topic, const char* payload)
 
 
 /**
- * @brief [最终修正版 V2] 回复云端命令，改用“单行指令”模式以规避模块固件问题
+ * @brief [最终修正版 V4 - 移除双重转义] 回复云端命令
  * @return bool: true 代表成功，false 代表失败
- * @note   此版本不再使用“提示符”模式，而是将转义后的JSON直接嵌入AT指令中。
- *         这解决了在收到+QMTRECV后立即发送数据模式指令会被模块拒绝(返回ERROR)的问题。
+ * @note   此版本彻底移除了手动转义的循环，直接使用snprintf生成的
+ *         干净JSON负载，以解决AT指令中出现多余反斜杠的问题。
  */
 bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* identifier, int code, const char* msg)
 {
     char reply_topic[128];
-    // --- [核心修改 1] ---
-    // 我们需要一个缓冲区来存放“带C语言转义符”的JSON负载。
-    // 这个缓冲区需要比干净的JSON大一点，以容纳转义符。
-    char escaped_json_payload[512]; 
-
-    // 为了安全，先构建一个干净的、不含转义符的JSON
+    // 不再需要 escaped_json_payload 缓冲区
     char clean_json_payload[256];
+
+    // 1. 直接构建最终需要的、不含C语言转义符的JSON字符串。
+    //    例如: {"id":"28","code":200,"msg":"success"}
     if (code == 200) {
         snprintf(clean_json_payload, sizeof(clean_json_payload),
-                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"success\",\"data\":{}}",
+                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"success\"}",
                  request_id, code);
     } else {
-        // 注意：这里有一个潜在风险，如果msg本身包含 " 或 \，会破坏JSON。
-        // 但对于 "Bad Request" 这种简单消息是安全的。
         snprintf(clean_json_payload, sizeof(clean_json_payload),
-                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"%s\",\"data\":{}}",
+                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"%s\"}",
                  request_id, code, msg);
     }
 
-    // --- [核心修改 2] ---
-    // 手动进行JSON转义：将 " 替换为 \"
-    // 这是因为我们要把这个JSON字符串作为另一个字符串的一部分。
-    int i = 0, j = 0;
-    while (clean_json_payload[i] != '\0' && j < sizeof(escaped_json_payload) - 2) {
-        if (clean_json_payload[i] == '\"') {
-            escaped_json_payload[j++] = '\\';
-            escaped_json_payload[j++] = '\"';
-        } else {
-            escaped_json_payload[j++] = clean_json_payload[i];
-        }
-        i++;
-    }
-    escaped_json_payload[j] = '\0';
+    // --- [核心修改] ---
+    // ---  已删除手动进行JSON转义的 while 循环 ---
+    // ---  该循环是导致双重转义的根源 ---
 
 
-    // 根据回复类型构建正确的目标Topic (逻辑不变)
+    // 2. 构建正确的目标Topic (逻辑不变)
     switch (reply_type)
     {
         case REPLY_TO_PROPERTY_SET:
@@ -414,14 +399,13 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
             return false;
     }
 
-    // --- [核心修改 3] ---
-    // 构建“单行完整”的 AT+QMTPUB 指令
+    // 3. 构建“单行完整”的 AT+QMTPUB 指令
+    //    直接使用我们精心构造好的 clean_json_payload
     snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
              "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
-             reply_topic, escaped_json_payload);
+             reply_topic, clean_json_payload);
 
-    // 直接发送这个指令，并等待模块返回 "OK" 或 "+QMTPUB: 0,0,0"
-    // 对于这种短消息，等待 "OK" 通常更快、更可靠。
+    // 4. 直接发送这个指令，并等待模块返回 "OK"
     return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000);
 }
 
@@ -655,25 +639,6 @@ void MQTT_Publish_Only_Temperatures(int temp1, int temp2, int temp3, int temp4)
     delay_ms(1000); // 因为报文变短了，延时可以适当缩短
 }
 
-/**
- * @brief [新增] 生成随机的模拟温度数据，并调用新函数上报到云平台
- */
-void MQTT_Publish_Temperatures_Random(void)
-{
-    int temp1, temp2, temp3, temp4;
-    
-    // 生成 15 到 25 度之间的随机基准温度
-    int base_temp = 15 + (rand() % 11); 
-
-    // 四个监测点温度: 在基准温度的基础上，加上 -2 到 +2 的随机偏差
-    temp1 = base_temp + (rand() % 5) - 2; 
-    temp2 = base_temp + (rand() % 5) - 2;
-    temp3 = base_temp + (rand() % 5) - 2;
-    temp4 = base_temp + (rand() % 5) - 2;
-
-    // --- 调用只上报温度的函数 ---
-    MQTT_Publish_Only_Temperatures(temp1, temp2, temp3, temp4);
-}
 
 
 
@@ -699,9 +664,6 @@ void MQTT_Publish_Environment_Data(int ambient_temp, int humidity, int pressure,
         ambient_temp, humidity, pressure, wind_speed
     );
 
-
-
-
     // 2. 构建 AT+QMTPUB 指令
     snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
             "AT+QMTPUB=0,0,0,0,\"$sys/%s/%s/thing/property/post\",\"%s\"\r\n",
@@ -715,32 +677,6 @@ void MQTT_Publish_Environment_Data(int ambient_temp, int humidity, int pressure,
     // 4. 等待模块处理和发送
     delay_ms(1500); // 这是一个中等长度的报文，延时1.5秒
 }
-
-
-/**
- * @brief [新增] 生成随机的环境数据并调用上报函数
- * @note  此函数用于周期性地测试环境数据的上报功能。
- */
-void MQTT_Publish_Environment_Data_Random(void)
-{
-    int ambient_temp, humidity, pressure, wind_speed;
-    
-    // --- 生成符合实际场景的随机数据 ---
-    ambient_temp = 15 + (rand() % 16); // 环境温度: 15 到 30 度
-    humidity     = 40 + (rand() % 41); // 相对湿度: 40% 到 80%
-    pressure     = 990 + (rand() % 41); // 大气压: 990 到 1030 hPa
-    wind_speed   = rand() % 11;         // 风速: 0 到 10 m/s
-
-    // 打印日志，方便调试
-    printf("INFO: Publishing random environment data (Temp: %d, Hum: %d, Pres: %d, Wind: %d)\r\n",
-           ambient_temp, humidity, pressure, wind_speed);
-
-    // --- 调用只上报环境数据的函数 ---
-    MQTT_Publish_Environment_Data(ambient_temp, humidity, pressure, wind_speed);
-}
-
-
-
 
 
 
@@ -972,10 +908,7 @@ int main(void)
                 
                 // --- 任务2: 周期性上报数据 (不变) ---
                 if (System_GetTimeMs() - last_report_time > report_interval_ms)
-                {
-                    // --- 在这里准备所有要上报的数据 ---
-                    // (这里我们仍然使用随机数模拟，但在实际应用中您会从传感器读取)
-                    
+                {                   
                     // 模拟环境数据
                     int sim_ambient_temp = 15 + (rand() % 16); // 环境温度: 15-30
                     int sim_humidity     = 40 + (rand() % 41); // 湿度: 40-80%
