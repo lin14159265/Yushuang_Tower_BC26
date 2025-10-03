@@ -916,9 +916,8 @@ int main(void)
                     printf("INFO: It's time to report sensor data.\r\n");
                     MQTT_Publish_Environment_Data_Random();
                     MQTT_Publish_Temperatures_Random();
-                    MQTT_Publish_System_Status(0,0,0,2);
-                    MQTT_Publish_Intervention_Status
-                    MQTT_Publish_Devices_Availability
+                    MQTT_Publish_Intervention_Status(1);
+                    MQTT_Publish_Devices_Availability(false, false, false);
 
                     delay_ms(500); // 短暂延时，避免发送过快
                     last_report_time = System_GetTimeMs();
