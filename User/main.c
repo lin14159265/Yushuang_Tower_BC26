@@ -846,6 +846,59 @@ void MQTT_Publish_Devices_Availability(bool sprinklers_available, bool fans_avai
 
 
 
+/**
+ * @brief 统一上报所有传感器和状态数据
+ * @param temp1                 监测点1温度
+ * @param temp2                 监测点2温度
+ * @param temp3                 监测点3温度
+ * @param temp4                 监测点4温度
+ * @param ambient_temp          环境温度
+ * @param humidity              环境湿度
+ * @param pressure              大气压
+ * @param wind_speed            风速
+ * @param intervention_status   人工干预状态
+ * @param sprinklers_available  喷淋系统是否可用
+ * @param fans_available        风机系统是否可用
+ * @param heaters_available     加热系统是否可用
+ * @note  此函数按顺序调用各个独立的数据上报函数，并在每次调用后加入短暂延时，
+ *        以确保4G模块有足够的时间处理和发送每条消息。
+ */
+void MQTT_Publish_All_Data(
+    // 温度数据
+    int temp1, int temp2, int temp3, int temp4,
+    // 环境数据
+    int ambient_temp, int humidity, int pressure, int wind_speed,
+    // 系统状态
+    int intervention_status,
+    // 设备可用性
+    bool sprinklers_available, bool fans_available, bool heaters_available)
+{
+    printf("INFO: === Begin publishing all data ===\r\n");
+
+    // 1. 上报环境数据
+    printf("INFO: Publishing environment data...\r\n");
+    // 注意：我们调用的是 MQTT_Publish_Environment_Data 而不是带 _Random 的版本
+    MQTT_Publish_Environment_Data(ambient_temp, humidity, pressure, wind_speed);
+    delay_ms(250); // 在两次发送之间加入短暂延时，给模块缓冲时间
+
+    // 2. 上报四个监测点温度
+    printf("INFO: Publishing point temperatures...\r\n");
+    // 注意：我们调用的是 MQTT_Publish_Only_Temperatures 而不是带 _Random 的版本
+    MQTT_Publish_Only_Temperatures(temp1, temp2, temp3, temp4);
+    delay_ms(250);
+
+    // 3. 上报人工干预状态
+    printf("INFO: Publishing intervention status...\r\n");
+    MQTT_Publish_Intervention_Status(intervention_status);
+    delay_ms(250);
+
+    // 4. 上报设备可用性
+    printf("INFO: Publishing devices availability...\r\n");
+    MQTT_Publish_Devices_Availability(sprinklers_available, fans_available, heaters_available);
+
+    printf("INFO: === Finished publishing all data ===\r\n\r\n");
+}
+
 
 
 
@@ -879,7 +932,7 @@ int main(void)
             MQTT_Get_Desired_Crop_Stage();
             
             u64 last_report_time = 0;
-            const uint32_t report_interval_ms = 15000;
+            const uint32_t report_interval_ms = 5000;
 
             // --- [核心修改：增加用于空闲检测的变量] ---
             unsigned int last_recv_num = 0;
@@ -920,13 +973,35 @@ int main(void)
                 // --- 任务2: 周期性上报数据 (不变) ---
                 if (System_GetTimeMs() - last_report_time > report_interval_ms)
                 {
-                    printf("INFO: It's time to report sensor data.\r\n");
-                    //MQTT_Publish_Environment_Data_Random();
-                    //MQTT_Publish_Temperatures_Random();
-                    //MQTT_Publish_Intervention_Status(1);
-                    MQTT_Publish_Devices_Availability(true, false, true);
+                    // --- 在这里准备所有要上报的数据 ---
+                    // (这里我们仍然使用随机数模拟，但在实际应用中您会从传感器读取)
+                    
+                    // 模拟环境数据
+                    int sim_ambient_temp = 15 + (rand() % 16); // 环境温度: 15-30
+                    int sim_humidity     = 40 + (rand() % 41); // 湿度: 40-80%
+                    int sim_pressure     = 990 + (rand() % 41);// 气压: 990-1030 hPa
+                    int sim_wind_speed   = rand() % 11;         // 风速: 0-10 m/s
 
-                    delay_ms(500); // 短暂延时，避免发送过快
+                    // 模拟监测点温度
+                    int base_temp = 15 + (rand() % 11); 
+                    int sim_temp1 = base_temp + (rand() % 5) - 2; 
+                    int sim_temp2 = base_temp + (rand() % 5) - 2;
+                    int sim_temp3 = base_temp + (rand() % 5) - 2;
+                    int sim_temp4 = base_temp + (rand() % 5) - 2;
+
+                    // 模拟状态和可用性 (您可以根据实际情况修改)
+                    int  sim_intervention_status = g_intervention_status; // 使用从云端获取的全局状态
+                    bool sim_sprinklers_ok = true;
+                    bool sim_fans_ok = true;
+                    bool sim_heaters_ok = false; // 假设加热器故障
+
+                    // --- 只需调用这一个函数，传入所有准备好的数据 ---
+                    MQTT_Publish_All_Data(
+                        sim_temp1, sim_temp2, sim_temp3, sim_temp4,
+                        sim_ambient_temp, sim_humidity, sim_pressure, sim_wind_speed,
+                        sim_intervention_status,
+                        sim_sprinklers_ok, sim_fans_ok, sim_heaters_ok
+                    );
                     last_report_time = System_GetTimeMs();
                 }
             }
