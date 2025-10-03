@@ -277,13 +277,16 @@ bool MQTT_Subscribe_Property_Set_Topic(void)
 }
 
 /**
- * @brief [健壮版] 订阅“服务调用”的主题，并等待确认
+ * @brief [最终修正版 - 遵从官方文档] 订阅“服务调用”的主题
  * @return bool: true 代表订阅成功, false 代表失败
+ * @note   在Topic中加入了通配符 '+', 以匹配官方文档定义的 
+ *         $sys/.../thing/service/{identifier}/invoke 格式。
  */
 bool MQTT_Subscribe_Service_Invoke_Topic(void)
 {
-    // Topic: $sys/{product_id}/{device_name}/thing/service/invoke
-    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/thing/service/invoke\",1\r\n", 
+    // 这个 '+' 通配符至关重要，它能匹配到云平台下发的所有具体服务
+    // 例如 set_intervention, start_sprinkler 等。
+    sprintf(g_cmd_buffer, "AT+QMTSUB=0,1,\"$sys/%s/%s/thing/service/+/invoke\",1\r\n", 
             MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
 
     // 发送指令并等待模块返回 "+QMTSUB: 0,1,0" 表示成功
@@ -394,35 +397,28 @@ bool MQTT_Publish_Message_Prompt_Mode(const char* topic, const char* payload)
 
 
 /**
- * @brief [最终修正版 V4 - 移除双重转义] 回复云端命令
- * @return bool: true 代表成功，false 代表失败
- * @note   此版本彻底移除了手动转义的循环，直接使用snprintf生成的
- *         干净JSON负载，以解决AT指令中出现多余反斜杠的问题。
+ * @brief [最终修正版 V5 - 遵从官方文档] 根据回复类型生成不同的JSON
+ * @note  为服务调用回复添加了必须的 "data" 字段，以避免超时。
  */
 bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* identifier, int code, const char* msg)
 {
     char reply_topic[128];
-    // 不再需要 escaped_json_payload 缓冲区
     char clean_json_payload[256];
 
-    // 1. 直接构建最终需要的、不含C语言转义符的JSON字符串。
-    //    例如: {"id":"28","code":200,"msg":"success"}
-    if (code == 200) {
-        snprintf(clean_json_payload, sizeof(clean_json_payload),
-                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"success\"}",
-                 request_id, code);
-    } else {
+    // 根据回复类型，智能构建JSON
+    if (reply_type == REPLY_TO_PROPERTY_SET) {
+        // 属性设置的回复，【不带】data字段
         snprintf(clean_json_payload, sizeof(clean_json_payload),
                  "{\"id\":\"%s\",\"code\":%d,\"msg\":\"%s\"}",
-                 request_id, code, msg);
+                 request_id, code, (code == 200) ? "success" : msg);
+    } else { // 适用于 REPLY_TO_SERVICE_INVOKE
+        // 服务调用的回复，【带有】空的data字段，严格遵循文档规范
+        snprintf(clean_json_payload, sizeof(clean_json_payload),
+                 "{\"id\":\"%s\",\"code\":%d,\"msg\":\"%s\",\"data\":{}}",
+                 request_id, code, (code == 200) ? "success" : msg);
     }
 
-    // --- [核心修改] ---
-    // ---  已删除手动进行JSON转义的 while 循环 ---
-    // ---  该循环是导致双重转义的根源 ---
-
-
-    // 2. 构建正确的目标Topic (逻辑不变)
+    // --- Topic构建部分 ---
     switch (reply_type)
     {
         case REPLY_TO_PROPERTY_SET:
@@ -430,27 +426,24 @@ bool MQTT_Send_Reply(const char* request_id, ReplyType reply_type, const char* i
                      "$sys/%s/%s/thing/property/set_reply",
                      MQTT_PRODUCT_ID, MQTT_DEVICE_NAME);
             break;
-
         case REPLY_TO_SERVICE_INVOKE:
             if (identifier == NULL || identifier[0] == '\0') {
                 return false;
             }
+            // 动态构建包含 identifier 的回复Topic，与文档一致
             snprintf(reply_topic, sizeof(reply_topic),
                      "$sys/%s/%s/thing/service/%s/invoke_reply",
                      MQTT_PRODUCT_ID, MQTT_DEVICE_NAME, identifier);
             break;
-
         default:
             return false;
     }
 
-    // 3. 构建“单行完整”的 AT+QMTPUB 指令
-    //    直接使用我们精心构造好的 clean_json_payload
+    // --- AT指令发送部分 ---
     snprintf(g_cmd_buffer, CMD_BUFFER_SIZE, 
              "AT+QMTPUB=0,0,0,0,\"%s\",\"%s\"\r\n",
              reply_topic, clean_json_payload);
 
-    // 4. 直接发送这个指令，并等待模块返回 "OK"
     return MQTT_Send_AT_Command(g_cmd_buffer, "OK", 5000);
 }
 
@@ -680,51 +673,72 @@ void Process_MQTT_Message_Robust(const char* buffer)
             reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_PROPERTY_SET, NULL, 400, "Bad Request");
         }
     }
-    // 2. 是不是“服务调用”命令？ (Topic 包含 /thing/service/invoke)
-    else if (strstr(buffer, "/thing/service/invoke") != NULL)
+    // 2. --- [核心修改] --- 是不是“服务调用”命令？
+    // 新的判断逻辑：只要同时包含 "/thing/service/" 和 "/invoke"，就认为是服务调用
+    else if (strstr(buffer, "/thing/service/") != NULL && strstr(buffer, "/invoke") != NULL)
     {
         printf("DEBUG: Received a 'Service Invoke' command.\r\n");
-        char method[64] = {0}; // 用来存放服务名，比如 "set_intervention"
+        char method[64] = {0};
 
-        // 尝试解析 method (服务标识符)
-        if (find_and_parse_json_string(buffer, "method", method, sizeof(method)))
+        // 尝试从 Topic 中提取 method (服务标识符)
+        // 这是一个更稳健的方法，直接从Topic获取服务名
+        const char *p_start = strstr(buffer, "/thing/service/");
+        if (p_start != NULL) {
+            p_start += strlen("/thing/service/"); // 移动指针到服务名开始的位置
+            const char *p_end = strstr(p_start, "/invoke");
+            if (p_end != NULL) {
+                int len = p_end - p_start;
+                if (len < sizeof(method)) {
+                    strncpy(method, p_start, len);
+                    method[len] = '\0';
+                }
+            }
+        }
+
+        // 判断具体是哪个服务
+        if (strcmp(method, "set_intervention") == 0)
         {
-            // 判断具体是哪个服务
-            if (strcmp(method, "set_intervention") == 0)
+            printf("DEBUG: Service is 'set_intervention'.\r\n");
+            int parsed_status;
+
+            // --- [核心修改] --- 解析服务调用的参数，键名从 "status" 改为 "method"
+            // 这是因为云平台下发的服务调用参数，键名通常是服务的标识符，而不是 "status"
+            // 例如：{"id":"123","method":1} 中的 "method" 才是我们需要的状态值
+            // 尝试解析该服务需要的参数，键名从 "status" 改为 "method"
+            if (find_and_parse_json_int(buffer, "method", &parsed_status))
             {
-                int parsed_status;
-                // 尝试解析该服务需要的 status 参数
-                if (find_and_parse_json_int(buffer, "status", &parsed_status))
+                // ========================================================
+                // ▼▼▼ 这里的LED控制逻辑保持您之前的版本 ▼▼▼
+                // ========================================================
+                g_intervention_status = parsed_status; 
+                printf("ACTION: Cloud invoked 'set_intervention' with status %d\r\n", g_intervention_status);
+
+                printf("ACTION: Executing hardware control...\r\n");
+                switch (g_intervention_status)
                 {
-                    g_intervention_status = parsed_status; // 执行命令：更新干预状态
-                    printf("ACTION: Cloud invoked 'set_intervention' with status %d\r\n", g_intervention_status);
-                    
-                    // 尝试发送“成功”的回复，并记录结果
-                    reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 200, "Intervention status updated");
+                    case 0: printf("ACTION: Turning off all systems.\r\n"); LED1_OFF; LED2_OFF; LED3_OFF; break;
+                    case 1: printf("ACTION: Activating Sprinklers ONLY.\r\n"); LED1_ON; LED2_OFF; LED3_OFF; break;
+                    case 2: printf("ACTION: Activating Fans ONLY.\r\n"); LED1_OFF; LED2_ON; LED3_OFF; break;
+                    case 3: printf("ACTION: Activating Heaters ONLY.\r\n"); LED1_OFF; LED2_OFF; LED3_ON; break;
+                    case 4: printf("ACTION: Activating Fans AND Heaters.\r\n"); LED1_OFF; LED2_ON; LED3_ON; break;
+                    default: printf("WARN: Received unknown status %d. Turning off all systems.\r\n", g_intervention_status); LED1_OFF; LED2_OFF; LED3_OFF; break;
                 }
-                else
-                {
-                     // 如果没找到 status 参数，这是客户端的请求错误
-                     printf("WARN: 'status' parameter not found for 'set_intervention' service.\r\n");
-                     // 尝试发送“请求错误”的回复，并记录结果
-                     reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 400, "Bad Request");
-                }
+
+                reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 200, "Intervention status updated");
+                // ========================================================
+                // ▲▲▲ 这里的LED控制逻辑保持您之前的版本 ▲▲▲
+                // ========================================================
             }
             else
             {
-                // 如果平台调用的服务是我们不认识的
-                printf("WARN: Received invoke for an unknown service: '%s'.\r\n", method);
-                // 尝试发送“服务未找到”的回复，并记录结果
-                reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 404, "Service not found");
+                 printf("WARN: 'method' parameter not found for 'set_intervention' service.\r\n");
+                 reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 400, "Bad Request");
             }
         }
         else
         {
-            // 如果服务调用连 method 字段都没有，这是格式错误
-            printf("WARN: 'method' identifier not found in Service Invoke command.\r\n");
-            // 尝试发送“请求错误”的回复，并记录结果
-            // 注意：因为没有method，所以第二个参数传 "null" 或者一个空字符串
-            reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, "unknown", 400, "Bad Request");
+            printf("WARN: Received invoke for an unknown or unparsed service: '%s'.\r\n", method);
+            reply_sent_successfully = MQTT_Send_Reply(request_id, REPLY_TO_SERVICE_INVOKE, method, 404, "Service not found");
         }
     }
 
