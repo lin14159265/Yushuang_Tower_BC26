@@ -27,76 +27,98 @@ Project File Date:  10/01/2025
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 5 (build 528)', folder: 'D:\Keil5\ARM\ARMCC\Bin'
 Rebuild target 'STM32F103'
-compiling system_f103.c...
-..\System\system_f103.c(166): warning:  #870-D: invalid multibyte character sequence
-          printf("【运行时�?-测试原点放置】\r");
-..\System\system_f103.c(172): warning:  #870-D: invalid multibyte character sequence
-      printf("【运行时�?-监察�?-%d:%9u us】\r", CNT++, intervalTimes);
-..\System\system_f103.c(172): warning:  #870-D: invalid multibyte character sequence
-      printf("【运行时�?-监察�?-%d:%9u us】\r", CNT++, intervalTimes);
-..\System\system_f103.c: 3 warnings, 0 errors
 assembling startup_stm32f10x_hd.s...
-compiling core_cm3.c...
-compiling misc.c...
-compiling bsp_led.c...
-compiling bsp_key.c...
-..\bsp\key\bsp_key.c(80): warning:  #870-D: invalid multibyte character sequence
-      printf("按键 初始�?           配置完成\r");
-..\bsp\key\bsp_key.c(91): warning:  #870-D: invalid multibyte character sequence
-          printf("�? 1 个按键被按下, 蓝灯反转\r");   // 重要提示：printf是不可重入函数，中断服务函数中使用，可能会产生不可预测的错误。这里使用printf，只用代码测试使用！�?
-..\bsp\key\bsp_key.c(104): warning:  #870-D: invalid multibyte character sequence
-          printf("�? 2 个按键被按下, 蓝灯反转\r");   // 重要提示：printf是不可重入函数，中断服务函数中使用，可能会产生不可预测的错误。这里使用printf，只用代码测试使用！�?      // 魔女开发板的按键使用电容进行硬件消�?,无需再使用软件延时消�?
-..\bsp\key\bsp_key.c(117): warning:  #870-D: invalid multibyte character sequence
-          printf("�? 3 个按键被按下, 蓝灯反转\r");   // 重要提示：printf是不可重入函数，中断服务函数中使用，可能会产生不可预测的错误。这里使用printf，只用代码测试使用！�?      // 魔女开发板的按键使用电容进行硬件消�?,无需再使用软件延时消�?
-..\bsp\key\bsp_key.c: 4 warnings, 0 errors
-compiling stm32f10x_dma.c...
-compiling stm32f10x_bkp.c...
-compiling system_stm32f10x.c...
 compiling stm32f10x_dbgmcu.c...
-compiling stm32f10x_it.c...
-compiling stm32f10x_adc.c...
-compiling stm32f10x_dac.c...
-compiling bsp_usart.c...
-..\bsp\USART\bsp_usart.c(107): warning:  #870-D: invalid multibyte character sequence
-      printf("USART1初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(107): warning:  #870-D: invalid multibyte character sequence
-      printf("USART1初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(322): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUSART2初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(322): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUSART2初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(488): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUSART3初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(488): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUSART3初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(655): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUART4 初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(655): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUART4 初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(820): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUART5 初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c(820): warning:  #870-D: invalid multibyte character sequence
-      printf("\rUART5 初始化配�?      接收中断、空闲中�?, 发送中断\r");
-..\bsp\USART\bsp_usart.c: 10 warnings, 0 errors
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_dbgmcu.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_dbgmcu.c: 0 warnings, 1 error
 compiling stm32f10x_can.c...
-compiling stm32f10x_exti.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_can.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_can.c: 0 warnings, 1 error
+compiling system_f103.c...
+D:\Keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include\stm32f10x.h(483): error:  #5: cannot open source input file "core_cm3.h": No such file or directory
+  #include "core_cm3.h"
+..\System\system_f103.c: 0 warnings, 1 error
+compiling bsp_led.c...
+D:\Keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include\stm32f10x.h(483): error:  #5: cannot open source input file "core_cm3.h": No such file or directory
+  #include "core_cm3.h"
+..\bsp\LED\bsp_led.c: 0 warnings, 1 error
+compiling core_cm3.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\CMSIS\core_cm3.c": No such file or directory
+..\Libraries\CMSIS\core_cm3.c: 0 warnings, 1 error
+compiling bsp_key.c...
+D:\Keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include\stm32f10x.h(483): error:  #5: cannot open source input file "core_cm3.h": No such file or directory
+  #include "core_cm3.h"
+..\bsp\key\bsp_key.c: 0 warnings, 1 error
+compiling stm32f10x_adc.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_adc.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_adc.c: 0 warnings, 1 error
+compiling stm32f10x_it.c...
+D:\Keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include\stm32f10x.h(483): error:  #5: cannot open source input file "core_cm3.h": No such file or directory
+  #include "core_cm3.h"
+..\User\stm32f10x_it.c: 0 warnings, 1 error
+compiling stm32f10x_bkp.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_bkp.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_bkp.c: 0 warnings, 1 error
+compiling bsp_usart.c...
+D:\Keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include\stm32f10x.h(483): error:  #5: cannot open source input file "core_cm3.h": No such file or directory
+  #include "core_cm3.h"
+..\bsp\USART\bsp_usart.c: 0 warnings, 1 error
+compiling misc.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\misc.c": No such file or directory
+..\Libraries\FWlib\src\misc.c: 0 warnings, 1 error
+compiling stm32f10x_dac.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_dac.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_dac.c: 0 warnings, 1 error
+compiling stm32f10x_dma.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_dma.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_dma.c: 0 warnings, 1 error
+compiling system_stm32f10x.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\CMSIS\system_stm32f10x.c": No such file or directory
+..\Libraries\CMSIS\system_stm32f10x.c: 0 warnings, 1 error
 compiling main.c...
+D:\Keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include\stm32f10x.h(483): error:  #5: cannot open source input file "core_cm3.h": No such file or directory
+  #include "core_cm3.h"
+..\User\main.c: 0 warnings, 1 error
+compiling stm32f10x_exti.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_exti.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_exti.c: 0 warnings, 1 error
 compiling stm32f10x_flash.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_flash.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_flash.c: 0 warnings, 1 error
 compiling stm32f10x_gpio.c...
-compiling stm32f10x_iwdg.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_gpio.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_gpio.c: 0 warnings, 1 error
 compiling stm32f10x_i2c.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_i2c.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_i2c.c: 0 warnings, 1 error
+compiling stm32f10x_iwdg.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_iwdg.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_iwdg.c: 0 warnings, 1 error
 compiling stm32f10x_pwr.c...
-compiling stm32f10x_rtc.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_pwr.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_pwr.c: 0 warnings, 1 error
 compiling stm32f10x_rcc.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_rcc.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_rcc.c: 0 warnings, 1 error
+compiling stm32f10x_rtc.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_rtc.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_rtc.c: 0 warnings, 1 error
 compiling stm32f10x_sdio.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_sdio.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_sdio.c: 0 warnings, 1 error
 compiling stm32f10x_spi.c...
-compiling stm32f10x_wwdg.c...
-compiling stm32f10x_usart.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_spi.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_spi.c: 0 warnings, 1 error
 compiling stm32f10x_tim.c...
-linking...
-Program Size: Code=15456 RO-data=1664 RW-data=164 ZI-data=28700  
-FromELF: creating hex file...
-".\Output\STM32F103.axf" - 0 Error(s), 17 Warning(s).
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_tim.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_tim.c: 0 warnings, 1 error
+compiling stm32f10x_usart.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_usart.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_usart.c: 0 warnings, 1 error
+compiling stm32f10x_wwdg.c...
+"no source": Error:  #5: cannot open source input file "..\Libraries\FWlib\src\stm32f10x_wwdg.c": No such file or directory
+..\Libraries\FWlib\src\stm32f10x_wwdg.c: 0 warnings, 1 error
+".\Output\STM32F103.axf" - 6 Error(s), 0 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -110,7 +132,8 @@ Package Vendor: Keil
   D:\Keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include
 
 <h2>Collection of Component Files used:</h2>
-Build Time Elapsed:  00:00:02
+Target not created.
+Build Time Elapsed:  00:00:01
 </pre>
 </body>
 </html>

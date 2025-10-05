@@ -50,3 +50,15 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+
+# Keil build output
+Project/Output/
+Output/
+*.crf
+*.dep
+*.axf
+*.o
+*.d
+*.build_log.htm
+*.htm
