@@ -115,7 +115,7 @@ extern xUSATR_TypeDef  xUSART;                      // 声明为全局变量,方
 void    USART1_Init (uint32_t baudrate);                      // 初始化串口的GPIO、通信参数配置、中断优先级; (波特率可设、8位数据、无校验、1个停止位)
 uint8_t USART1_GetBuffer (uint8_t* buffer, uint8_t* cnt);     // 获取接收到的数据
 void    USART1_SendData (uint8_t* buf, uint8_t cnt);          // 通过中断发送数据，适合各种数据
-void    USART1_SendString (char* stringTemp);                 // 通过中断发送字符串，适合字符串，长度在256个长度内的
+void    USART1_SendString (char* stringTemp);                 // 通过中断发送字符串，适合字符串，长度在4096个长度内的
 void    USART1_printfForDMA (char* stringTemp) ;              // 通过DMA发送数据，适合一次过发送数据量特别大的字符串，省了占用中断的时间
 // USART2
 void    USART2_Init (uint32_t baudrate);                      // 初始化串口的GPIO、通信参数配置、中断优先级; (波特率可设、8位数据、无校验、1个停止位)

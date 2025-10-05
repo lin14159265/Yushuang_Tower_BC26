@@ -114,9 +114,9 @@ void USART1_Init(uint32_t baudrate)
  * 返回值： 无
  *
 ******************************************************************************/
-static uint8_t U1TxBuffer[256] ;    // 用于中断发送：环形缓冲区，256个字节
-static uint8_t U1TxCounter = 0 ;    // 用于中断发送：标记已发送的字节数(环形)
-static uint8_t U1TxCount   = 0 ;    // 用于中断发送：标记将要发送的字节数(环形)
+static uint16_t U1TxBuffer[4096] ;    // 用于中断发送：环形缓冲区，4096个字节
+static uint16_t U1TxCounter = 0 ;    // 用于中断发送：标记已发送的字节数(环形)
+static uint16_t U1TxCount   = 0 ;    // 用于中断发送：标记将要发送的字节数(环形)
 
 void USART1_IRQHandler(void)
 {
@@ -183,14 +183,14 @@ uint8_t USART1_GetBuffer(uint8_t *buffer, uint8_t *cnt)
  * 函  数： vUSART1_SendData
  * 功  能： UART通过中断发送数据,适合各种数据类型
  *         【适合场景】本函数可发送各种数据，而不限于字符串，如int,char
- *         【不 适 合】注意环形缓冲区容量256字节，如果发送频率太高，注意波特率
- * 参  数： uint8_t* buffer   需发送数据的首地址
- *          uint8_t  cnt      发送的字节数 ，限于中断发送的缓存区大小，不能大于256个字节
+ *         【不 适 合】注意环形缓冲区容量4096字节，如果发送频率太高，注意波特率
+ * 参  数： uint16_t* buffer   需发送数据的首地址
+ *          uint16_t  cnt      发送的字节数 ，限于中断发送的缓存区大小，不能大于4096个字节
  * 返回值：
  ******************************************************************************/
 void USART1_SendData(uint8_t *buf, uint8_t cnt)
 {
-    for (uint8_t i = 0; i < cnt; i++)
+    for (uint16_t i = 0; i < cnt; i++)
         U1TxBuffer[U1TxCount++] = buf[i];
 
     if ((USART1->CR1 & 1 << 7) == 0)       // 检查发送缓冲区空置中断(TXEIE)是否已打开
@@ -200,7 +200,7 @@ void USART1_SendData(uint8_t *buf, uint8_t cnt)
 /******************************************************************************
  * 函  数： vUSART1_SendString
  * 功  能： UART通过中断发送输出字符串,无需输入数据长度
- *         【适合场景】字符串，长度<=256字节
+ *         【适合场景】字符串，长度<=4096字节
  *         【不 适 合】int,float等数据类型
  * 参  数： char* stringTemp   需发送数据的缓存首地址
  * 返回值： 元
@@ -926,43 +926,55 @@ void UART5_SendString(char *stringTemp)
 
 
 
-
-//////////////////////////////////////////////////////////////  printf   //////////////////////////////////////////////////////////////
-/******************************************************************************
- * 功  能： printf函数支持代码
- *         【特别注意】加入以下代码, 使用printf函数时, 不再需要选择use MicroLIB
- * 参  数：
- * 返回值：
- * 备  注： 最后修改_2020年07月15日
- ******************************************************************************/
-//加入以下代码,支持printf函数,而不需要选择use MicroLIB
-#pragma import(__use_no_semihosting)
-struct __FILE
+int _write(int fd, char *pBuffer, int size)
 {
-    int handle;
-};                     // 标准库需要的支持函数
-FILE __stdout;         // FILE 在stdio.h文件
-void _sys_exit(int x)
-{
-    x = x;             // 定义_sys_exit()以避免使用半主机模式
+    int i = 0;
+    for (i = 0; i < size; i++)
+    {
+        while (USART_GetFlagStatus(USART2, USART_FLAG_TXE) == RESET);
+        USART_SendData(USART2, (uint8_t) *pBuffer++);
+    }
+    return size;
 }
 
 
 
-int fputc(int ch, FILE *f)                   // 重定向fputc函数，使printf的输出，由fputc输出到UART,  这里使用串口2(USART2)
-{
-#if 0                                        // 方式1-使用常用的poll方式发送数据，比较容易理解，但等待耗时大
-    while ((USART2->SR & 0X40) == 0);        // 等待上一次串口数据发送完成
-    USART2->DR = (u8) ch;                    // 写DR,串口2将发送数据
-    return ch;
-#else                                        // 方式2-使用queue+中断方式发送数据; 无需像方式1那样等待耗时，但要借助已写好的函数、环形缓冲
-    uint8_t c[1] = {(uint8_t)ch};
-    if (USARTx_DEBUG == USART1)    USART1_SendData(c, 1);
-    if (USARTx_DEBUG == USART2)    USART2_SendData(c, 1);
-    if (USARTx_DEBUG == USART3)    USART3_SendData(c, 1);
-    if (USARTx_DEBUG == UART4)     UART4_SendData(c, 1);
-    if (USARTx_DEBUG == UART5)     UART5_SendData(c, 1);
-    return ch;
-#endif
-}
+////////////////////////////////////////////////////////////////  printf   //////////////////////////////////////////////////////////////
+///******************************************************************************
+// * 功  能： printf函数支持代码
+// *         【特别注意】加入以下代码, 使用printf函数时, 不再需要选择use MicroLIB
+// * 参  数：
+// * 返回值：
+// * 备  注： 最后修改_2020年07月15日
+// ******************************************************************************/
+////加入以下代码,支持printf函数,而不需要选择use MicroLIB
+//#pragma import(__use_no_semihosting)
+//struct __FILE
+//{
+//    int handle;
+//};                     // 标准库需要的支持函数
+//FILE __stdout;         // FILE 在stdio.h文件
+//void _sys_exit(int x)
+//{
+//    x = x;             // 定义_sys_exit()以避免使用半主机模式
+//}
+
+
+
+//int fputc(int ch, FILE *f)                   // 重定向fputc函数，使printf的输出，由fputc输出到UART,  这里使用串口2(USART2)
+//{
+//#if 0                                        // 方式1-使用常用的poll方式发送数据，比较容易理解，但等待耗时大
+//    while ((USART2->SR & 0X40) == 0);        // 等待上一次串口数据发送完成
+//    USART2->DR = (u8) ch;                    // 写DR,串口2将发送数据
+//    return ch;
+//#else                                        // 方式2-使用queue+中断方式发送数据; 无需像方式1那样等待耗时，但要借助已写好的函数、环形缓冲
+//    uint8_t c[1] = {(uint8_t)ch};
+//    if (USARTx_DEBUG == USART1)    USART1_SendData(c, 1);
+//    if (USARTx_DEBUG == USART2)    USART2_SendData(c, 1);
+//    if (USARTx_DEBUG == USART3)    USART3_SendData(c, 1);
+//    if (USARTx_DEBUG == UART4)     UART4_SendData(c, 1);
+//    if (USARTx_DEBUG == UART5)     UART5_SendData(c, 1);
+//    return ch;
+//#endif
+//}
 
